@@ -27,6 +27,7 @@ public sealed class TaskbarService : IDisposable
     private const int EventObjectHide = 0x8003;
     private const int EventSystemForeground = 0x0003;
     private const int EventObjectLocationChange = 0x800B;
+    private const int ObjidWindow = 0;
     private const uint WinEventOutOfContext = 0x0000;
     private const uint WinEventSkipOwnProcess = 0x0002;
 
@@ -38,6 +39,7 @@ public sealed class TaskbarService : IDisposable
     private IntPtr _tray, _trayNotify, _start, _appArea;
     private IntPtr _hLocHook, _hObjHook, _hFgHook;
     private uint _explorerPid;
+    private uint _explorerTid;
     private TaskbarGeometry _current;
     private bool _hasCurrent;
     private bool _fullscreen;
@@ -79,7 +81,7 @@ public sealed class TaskbarService : IDisposable
             return;
         }
         _missingRetry.Stop();
-        Native.GetWindowThreadProcessId(_tray, out _explorerPid);
+        _explorerTid = Native.GetWindowThreadProcessId(_tray, out _explorerPid);
 
         _trayNotify = Native.FindWindowEx(_tray, IntPtr.Zero, "TrayNotifyWnd", null);
         _start = Native.FindWindowEx(_tray, IntPtr.Zero, "Start", null);
@@ -99,9 +101,9 @@ public sealed class TaskbarService : IDisposable
         Unhook(ref _hObjHook);
         if (_explorerPid == 0) return;
         _hLocHook = Native.SetWinEventHook(EventObjectLocationChange, EventObjectLocationChange,
-            IntPtr.Zero, _winEventProc, _explorerPid, 0, WinEventOutOfContext | WinEventSkipOwnProcess);
+            IntPtr.Zero, _winEventProc, _explorerPid, _explorerTid, WinEventOutOfContext | WinEventSkipOwnProcess);
         _hObjHook = Native.SetWinEventHook(EventObjectDestroy, EventObjectHide,
-            IntPtr.Zero, _winEventProc, _explorerPid, 0, WinEventOutOfContext | WinEventSkipOwnProcess);
+            IntPtr.Zero, _winEventProc, _explorerPid, _explorerTid, WinEventOutOfContext | WinEventSkipOwnProcess);
         Log($"hooks loc={_hLocHook} obj={_hObjHook} fg={_hFgHook}");
     }
 
@@ -125,20 +127,22 @@ public sealed class TaskbarService : IDisposable
                 EvaluateFullscreen();
                 return;
             }
+            if (eventType == EventObjectLocationChange && idObject != ObjidWindow) return; // ignore cursor/caret
+            // Taskbar destroyed/recreated: handle the old hwnd going away first.
+            if ((eventType == EventObjectDestroy || eventType == EventObjectHide) && hwnd == _tray)
+            {
+                Relocate(); Recompute();
+                return;
+            }
             if (hwnd == _tray || hwnd == _trayNotify || hwnd == _start || hwnd == _appArea)
             {
                 _debounce.Stop(); // restart -> coalesce LOCATIONCHANGE spam
                 _debounce.Start();
                 return;
             }
-            // Taskbar destroyed/recreated: the new Shell_TrayWnd hwnd differs from ours.
             if (_tray == IntPtr.Zero || !Native.IsWindow(_tray))
             {
                 if (ClassName(hwnd) == "Shell_TrayWnd") { Relocate(); Recompute(); }
-            }
-            else if ((eventType == EventObjectDestroy || eventType == EventObjectHide) && hwnd == _tray)
-            {
-                Relocate(); Recompute();
             }
         }
         catch (Exception ex) { Log($"OnWinEvent failed: {ex.Message}"); }
