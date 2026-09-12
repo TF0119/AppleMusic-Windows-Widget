@@ -1,0 +1,53 @@
+# Apple Music Capability Matrix — Phase 0 results
+
+検証日: 2026-09-11
+環境: Windows 11, Apple Music (Store) `AppleInc.AppleMusicWin_1.1540.23042.0_x64__nzyj5cx40ttqa`, .NET SDK 10.0.401
+検証アプリ: `src/AppleMusicWidget.Probe` (`AmwProbe.exe`, `net10.0-windows10.0.19041.0`)
+
+## Feature matrix
+
+| Feature                        | Supported | Method / Notes |
+|--------------------------------|-----------|----------------|
+| Process name                   | Yes       | `AppleMusic.exe` (exact match; companion `AMPLibraryAgent.exe` must be excluded) |
+| Start detection                | Yes       | WMI `__InstanceCreationEvent` on `Win32_Process` — **works non-elevated** (fired ~0.4s before the 2s poll) |
+| Exit detection                 | Yes       | `Process.Exited`, `WaitForExitAsync`, and WMI `__InstanceDeletionEvent` all fire non-elevated |
+| GSMTC session identity         | Yes       | `SourceAppUserModelId` = `AppleInc.AppleMusicWin_nzyj5cx40ttqa!App` (prefix `AppleInc.AppleMusic`) |
+| SessionsChanged event          | Yes       | Fires on session appear/disappear; usable as reconnection trigger |
+| Track title                    | Yes       | `MediaProperties.Title` |
+| Artist                         | Partial   | `MediaProperties.Artist` contains **`"{artist} — {album}"` combined** (e.g. `BlueVeil — Spring Spring - Single`, `n-buna • アイラ - Single`). Separator varies per track. `AlbumArtist` holds the same combined value. `AlbumTitle` is always empty. |
+| Album title                    | No        | `MediaProperties.AlbumTitle` always `""` — parse out of `Artist` field instead |
+| Track number / genres          | No        | `TrackNumber=0`, `AlbumTrackCount=0`, `Genres` empty |
+| Artwork                        | Yes       | `MediaProperties.Thumbnail` → `OpenReadAsync()` (~120KB JPEG observed) |
+| Playback status                | Yes       | `GetPlaybackInfo().PlaybackStatus` — observed `Playing`, `Paused`, `Opened` (fresh launch, never played) |
+| Play / Pause / Prev / Next     | Yes       | `TryPlayAsync`/`TryPauseAsync`/`TrySkipPreviousAsync`/`TrySkipNextAsync`; availability is dynamic (`IsPreviousEnabled=False` at queue start) |
+| Timeline (pos/end/seek range)  | Yes       | `GetTimelineProperties()` gives `Position`, `EndTime`, `MinSeekTime`, `MaxSeekTime`, `LastUpdatedTime` → supports local interpolation |
+| Seek                           | **No**    | `TryChangePlaybackPositionAsync` returns `True` but Apple Music ignores it (Phase 2: tested playing and paused, ticks and ms — position never moved). `IsPlaybackPositionEnabled=False` is honest. Phase 0's "Yes" was a false positive (seeked to the *current* position). Seeks made in Apple Music's own scrubber DO arrive via `TimelinePropertiesChanged`. Widget shows a read-only progress bar; plumbing kept in case a future version enables it. |
+| Track change latency           | Yes       | `MediaPropertiesChanged` → widget title+artwork updated in ~360 ms after `TrySkipNextAsync` (Phase 2) |
+| Minimized / other v-desktop    | Assumed   | Session is process-global, not window-bound; expected to persist (confirm in Phase 7) |
+| Launched-but-never-played      | Yes       | Session exists with `PlaybackStatus=Opened`, empty props, zeroed timeline → show idle UI |
+| `…` menu                       | Untested  | Not exposed via GSMTC → UI Automation (Phase 5) |
+| Play Next queue                | Untested  | Not exposed via GSMTC → UI Automation (Phase 5) |
+
+## Lifecycle behavior (observed)
+
+- Apple Music exit sequence: GSMTC `SessionsChanged` (session gone) → ~1.2s later `Process.Exited`. Widget should hide on **process** exit, not session loss (session can drop earlier).
+- Cold start sequence: `__InstanceCreationEvent` → process found → `SessionsChanged` ~80ms later → session connectable within ~2s.
+- Release on exit: detach handlers, drop refs → working set back to baseline (~60MB probe baseline).
+- Idle CPU (`WaitingForAppleMusic`): **0.01–0.04%** measured over minutes. Playing-idle similar.
+- Memory: stable ~61MB in probe (no WPF yet); no growth observed across start/stop cycle.
+
+## PowerShell 5.1 note
+
+`ManagementEventWatcher` + `WaitForNextEvent()` timed out in PS5.1 probe (non-elevated), but the **same API works in .NET 10**. WMI events are usable as primary detection; keep 2s polling as fallback since plan §5.3 allows it.
+
+## Phase 2 measurements (Debug build, WPF widget)
+
+- CPU while Playing (500 ms interpolation tick): 0.044 % — Paused (tick stopped): 0.020 %
+- Working set: ~183 MB in Debug — **over the 100 MB target**; Phase 3 must measure Release + investigate (WinForms load for NotifyIcon, WPF baseline, UIA).
+- Position tick observed advancing 1 s/s while Playing and frozen while Paused; resumes correctly.
+
+## Open questions for later phases
+
+- Whether `Artist` field separator is consistently ` — ` (em-dash) vs ` • ` — observed both; treat `Artist` string as display-ready "artist — album" line rather than parsing.
+- `…` menu / queue invocation via UI Automation (Phase 5).
+- Behavior during sleep/resume and session re-creation after Apple Music update (Phase 7).
