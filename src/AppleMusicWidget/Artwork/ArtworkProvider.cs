@@ -18,14 +18,12 @@ public static class ArtworkProvider
         try
         {
             using var stream = await thumb.OpenReadAsync();
-            using var ms = new MemoryStream();
-            await stream.AsStreamForRead().CopyToAsync(ms);
-            ms.Position = 0;
+            using var s = stream.AsStreamForRead(); // OnLoad reads it fully during EndInit
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.CacheOption = BitmapCacheOption.OnLoad;
             bmp.DecodePixelWidth = decodePixelWidth;
-            bmp.StreamSource = ms;
+            bmp.StreamSource = s;
             bmp.EndInit();
             bmp.Freeze(); // safe to hand to the UI thread
             return bmp;
