@@ -1,0 +1,175 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using Color = System.Windows.Media.Color;
+using AppleMusicWidget.Models;
+using AppleMusicWidget.Services;
+using Microsoft.Win32;
+
+namespace AppleMusicWidget.UI;
+
+/// <summary>
+/// 48px strip docked on the taskbar immediately left of the notification area
+/// (PLAN §0.1/§0.3). Overlay tool window: WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE so it
+/// never steals focus. Position is pushed in physical pixels via SetWindowPos.
+/// </summary>
+public partial class TaskbarStrip : Window
+{
+    private const int WidthDip = 340;
+
+    private readonly PlayerViewModel _vm;
+    private readonly TaskbarService _taskbar;
+    private readonly WidgetSettings _settings;
+
+    private IntPtr _hwnd;
+    private TaskbarService.TaskbarGeometry _geo;
+    private bool _fullscreen;
+    private bool _collides;
+
+    public TaskbarStrip(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings)
+    {
+        InitializeComponent();
+        _vm = vm;
+        _taskbar = taskbar;
+        _settings = settings;
+        DataContext = vm;
+
+        ApplyTheme();
+        SystemEvents.UserPreferenceChanged += (_, _) => Dispatcher.InvokeAsync(ApplyTheme);
+
+        _taskbar.Changed += g => Dispatcher.InvokeAsync(() => { _geo = g; Reposition(); ApplyVisibility(); });
+        _taskbar.FullscreenChanged += fs => Dispatcher.InvokeAsync(() => { _fullscreen = fs; ApplyVisibility(); });
+        if (_taskbar.Current is { } g0) _geo = g0;
+
+        _vm.PropertyChanged += OnVmPropertyChanged;
+        ProgressTrack.SizeChanged += (_, _) => UpdateProgress();
+    }
+
+    private bool _wantVisible;
+    /// <summary>Lifecycle's intent; actual visibility also needs taskbar visible, no fullscreen, no collision.</summary>
+    public bool WantVisible
+    {
+        get => _wantVisible;
+        set { _wantVisible = value; ApplyVisibility(); }
+    }
+
+    // ---------- positioning ----------
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        _hwnd = new WindowInteropHelper(this).Handle;
+        var ex = Native.GetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE);
+        Native.SetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE,
+            new IntPtr(ex.ToInt64() | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE));
+        Reposition();
+        ApplyVisibility();
+    }
+
+    private void Reposition()
+    {
+        if (_hwnd == IntPtr.Zero || !_geo.IsVisible) return;
+        var scale = _geo.Dpi;
+        var hPx = (int)Math.Round(_geo.TaskbarRect.Height);
+        var wPx = (int)Math.Round(WidthDip * scale);
+        var x = (int)Math.Round(_geo.TrayRect.Left) - _settings.TaskbarGapPx - wPx;
+        var y = (int)Math.Round(_geo.TaskbarRect.Top);
+        _collides = x < _geo.AppAreaRect.Right + 8;
+        if (_collides)
+        {
+            Debug.WriteLine($"[TaskbarStrip] collision with app area (need x={x}, apps end {_geo.AppAreaRect.Right}); hidden until Phase 6 compact mode");
+            ApplyVisibility();
+            return;
+        }
+        Height = _geo.TaskbarRect.Height / scale;
+        Width = WidthDip;
+        // HWND_TOPMOST on every reposition: a recreated taskbar (Explorer restart)
+        // can land above us in the topmost band.
+        Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, wPx, hPx,
+            Native.SWP_NOACTIVATE);
+    }
+
+    private void ApplyVisibility()
+    {
+        var show = WantVisible && _geo.IsVisible && !_fullscreen && !_collides;
+        if (show && !IsVisible) Show();
+        else if (!show && IsVisible) Hide();
+    }
+
+    // ---------- theme (follows SystemUsesLightTheme — the taskbar's theme) ----------
+
+    private void ApplyTheme()
+    {
+        bool light = Theme.SystemUsesLightTheme;
+        Set("TxtPrimary", light ? Color.FromArgb(0xE4, 0x00, 0x00, 0x00) : Colors.White);
+        Set("TxtSecondary", light ? Color.FromArgb(0x9B, 0x00, 0x00, 0x00) : Color.FromArgb(0xC5, 0xFF, 0xFF, 0xFF));
+        Set("TxtDisabled", light ? Color.FromArgb(0x66, 0x00, 0x00, 0x00) : Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF));
+        Set("BtnHover", light ? Color.FromArgb(0x0A, 0x00, 0x00, 0x00) : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        Set("BtnPressed", light ? Color.FromArgb(0x14, 0x00, 0x00, 0x00) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+        Resources["AccentBrush"] = SystemParameters.WindowGlassBrush;
+    }
+
+    private void Set(string key, Color c) => Resources[key] = new SolidColorBrush(c);
+
+    // ---------- progress line / artwork clip ----------
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
+            UpdateProgress();
+    }
+
+    private void UpdateProgress()
+    {
+        ProgressFill.Width = _vm.ProgressFraction * ProgressTrack.ActualWidth;
+    }
+
+    private void OnArtworkSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (ArtworkImage.ActualWidth <= 0 || ArtworkImage.ActualHeight <= 0) return;
+        ArtworkImage.Clip = new RectangleGeometry(
+            new Rect(0, 0, ArtworkImage.ActualWidth, ArtworkImage.ActualHeight), 4, 4);
+    }
+
+    private void OnBodyClick(object sender, MouseButtonEventArgs e) =>
+        Debug.WriteLine("flyout: TODO"); // Phase 4
+
+    private static class Theme
+    {
+        public static bool SystemUsesLightTheme
+        {
+            get
+            {
+                try
+                {
+                    var v = Registry.GetValue(
+                        @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                        "SystemUsesLightTheme", 1);
+                    return v is int i ? i != 0 : true;
+                }
+                catch { return true; }
+            }
+        }
+    }
+
+    private static class Native
+    {
+        public const int GWL_EXSTYLE = -20;
+        public const long WS_EX_TOOLWINDOW = 0x00000080;
+        public const long WS_EX_NOACTIVATE = 0x08000000;
+        public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_NOZORDER = 0x0004;
+        public static readonly IntPtr HWND_TOPMOST = new(-1);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        [DllImport("user32.dll")]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    }
+}

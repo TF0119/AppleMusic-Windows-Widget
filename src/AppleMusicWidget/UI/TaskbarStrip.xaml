@@ -1,0 +1,100 @@
+<Window x:Class="AppleMusicWidget.UI.TaskbarStrip"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="340" Height="48"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" ShowActivated="False"
+        ResizeMode="NoResize" Topmost="True">
+    <Window.Resources>
+        <Style x:Key="StripButton" TargetType="Button">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="{DynamicResource TxtPrimary}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{DynamicResource BtnHover}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{DynamicResource BtnPressed}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource TxtDisabled}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PlayPauseButton" TargetType="Button" BasedOn="{StaticResource StripButton}">
+            <Setter Property="Content" Value="&#xE768;" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                    <Setter Property="Content" Value="&#xE769;" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <!-- alpha=1: invisible but makes the layered window hit-testable (alpha=0 pixels are click-through) -->
+    <Border x:Name="Root" Background="#01000000" MouseLeftButtonDown="OnBodyClick">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="32" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="8" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 32x32 artwork / placeholder with music note -->
+            <Grid Grid.Column="1" Width="32" Height="32" VerticalAlignment="Center">
+                <Border CornerRadius="4" Background="#20808080">
+                    <TextBlock Text="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="14"
+                               Foreground="{DynamicResource TxtSecondary}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <Image x:Name="ArtworkImage" Source="{Binding Artwork}"
+                       Stretch="UniformToFill" SizeChanged="OnArtworkSizeChanged" />
+            </Grid>
+
+            <!-- Title / subtitle / 2px progress line -->
+            <Grid Grid.Column="3" VerticalAlignment="Center" Margin="0,3,0,3">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="4" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="{Binding Title}" ToolTip="{Binding Title}"
+                           Foreground="{DynamicResource TxtPrimary}" FontSize="12" FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Row="1" Text="{Binding Subtitle}" ToolTip="{Binding Subtitle}"
+                           Foreground="{DynamicResource TxtSecondary}" FontSize="11"
+                           TextTrimming="CharacterEllipsis" />
+                <Grid Grid.Row="2" x:Name="ProgressTrack" Margin="0,2,0,0">
+                    <Rectangle Height="2" Fill="#20808080" VerticalAlignment="Center" />
+                    <Rectangle x:Name="ProgressFill" Height="2" Fill="{DynamicResource AccentBrush}"
+                               HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" />
+                </Grid>
+            </Grid>
+
+            <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Style="{StaticResource StripButton}" Content="&#xE892;"
+                        Command="{Binding PreviousCommand}" />
+                <Button Style="{StaticResource PlayPauseButton}"
+                        Command="{Binding PlayPauseCommand}" />
+                <Button Style="{StaticResource StripButton}" Content="&#xE893;"
+                        Command="{Binding NextCommand}" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
