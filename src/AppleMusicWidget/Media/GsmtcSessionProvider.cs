@@ -23,7 +23,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
     public event Action? SessionConnected;
     public event Action? SessionLost;
 
-    // TODO Phase 3: guard with a lock; ConnectAsync and OnSessionsChanged can race
+    private readonly object _gate = new();
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
     private string? _lastTrackKey;
@@ -31,7 +31,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
     private bool _sessionsHooked;
     private bool _wantConnection;
 
-    public bool IsConnected => _session is not null;
+    public bool IsConnected { get { lock (_gate) return _session is not null; } }
 
     public async Task ConnectAsync()
     {
@@ -55,12 +55,17 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
     /// <summary>Safe to call twice. Keeps the manager for app lifetime.</summary>
     public void Disconnect()
     {
-        _wantConnection = false;
-        Unbind();
-        if (_sessionsHooked && _manager is not null)
+        GlobalSystemMediaTransportControlsSessionManager? manager;
+        lock (_gate)
         {
-            try { _manager.SessionsChanged -= OnSessionsChanged; } catch (Exception ex) { Log($"unhook SessionsChanged: {ex.Message}"); }
+            _wantConnection = false;
+            manager = _sessionsHooked ? _manager : null;
             _sessionsHooked = false;
+        }
+        Unbind();
+        if (manager is not null)
+        {
+            try { manager.SessionsChanged -= OnSessionsChanged; } catch (Exception ex) { Log($"unhook SessionsChanged: {ex.Message}"); }
         }
     }
 
@@ -71,7 +76,9 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
 
     public async Task TogglePlayPauseAsync()
     {
-        if (_lastState == PlaybackState.Playing) await PauseAsync();
+        PlaybackState last;
+        lock (_gate) last = _lastState;
+        if (last == PlaybackState.Playing) await PauseAsync();
         else await PlayAsync();
     }
 
@@ -80,7 +87,8 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
 
     private async Task TryControl(Func<GlobalSystemMediaTransportControlsSession, IAsyncOperation<bool>> op)
     {
-        var s = _session;
+        GlobalSystemMediaTransportControlsSession? s;
+        lock (_gate) s = _session;
         if (s is null) return;
         try { await op(s); }
         catch (Exception ex) { Log($"control call failed: {ex.Message}"); }
@@ -90,15 +98,24 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
 
     private void TryBind()
     {
-        if (_manager is null || _session is not null) return;
+        GlobalSystemMediaTransportControlsSessionManager? manager;
+        lock (_gate)
+        {
+            if (_manager is null || _session is not null) return;
+            manager = _manager;
+        }
         GlobalSystemMediaTransportControlsSession? s;
-        try { s = _manager.GetSessions().FirstOrDefault(AppleMusicSessionMatcher.IsAppleMusic); }
+        try { s = manager.GetSessions().FirstOrDefault(AppleMusicSessionMatcher.IsAppleMusic); }
         catch (Exception ex) { Log($"GetSessions failed: {ex.Message}"); return; }
         if (s is null) return; // SessionsChanged re-fires when one appears.
 
-        _session = s;
-        _lastTrackKey = null; // force full emit on first bind
-        _lastState = PlaybackState.Unknown;
+        lock (_gate)
+        {
+            if (_session is not null) return; // bound while we were enumerating
+            _session = s;
+            _lastTrackKey = null; // force full emit on first bind
+            _lastState = PlaybackState.Unknown;
+        }
         try
         {
             s.MediaPropertiesChanged += OnMediaPropertiesChanged;
@@ -113,10 +130,14 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
 
     private void Unbind()
     {
-        var s = _session;
-        _session = null;
-        _lastTrackKey = null;
-        _lastState = PlaybackState.Unknown;
+        GlobalSystemMediaTransportControlsSession? s;
+        lock (_gate)
+        {
+            s = _session;
+            _session = null;
+            _lastTrackKey = null;
+            _lastState = PlaybackState.Unknown;
+        }
         if (s is null) return;
         try { s.MediaPropertiesChanged -= OnMediaPropertiesChanged; } catch { }
         try { s.PlaybackInfoChanged -= OnPlaybackInfoChanged; } catch { }
@@ -128,13 +149,17 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
         try
         {
             var sessions = sender.GetSessions();
-            if (_session is not null && !sessions.Contains(_session))
+            bool lost;
+            lock (_gate) lost = _session is not null && !sessions.Contains(_session);
+            if (lost)
             {
                 Log("bound session vanished");
                 Unbind();
                 SessionLost?.Invoke();
             }
-            if (_session is null && _wantConnection)
+            bool want;
+            lock (_gate) want = _session is null && _wantConnection;
+            if (want)
                 TryBind();
         }
         catch (Exception ex) { Log($"SessionsChanged failed: {ex.Message}"); }
@@ -163,11 +188,14 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
         try
         {
             var p = await s.TryGetMediaPropertiesAsync();
-            if (!ReferenceEquals(_session, s)) return; // rebound mid-await
             var track = TrackInfo.Create(p.Title ?? "", p.Artist ?? "");
-            // MediaPropertiesChanged fires several times per track; dedupe by key.
-            if (!force && track.Key == _lastTrackKey) return;
-            _lastTrackKey = track.Key;
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_session, s)) return; // rebound mid-await
+                // MediaPropertiesChanged fires several times per track; dedupe by key.
+                if (!force && track.Key == _lastTrackKey) return;
+                _lastTrackKey = track.Key;
+            }
             TrackChanged?.Invoke(track);
             ArtworkChanged?.Invoke(p.Thumbnail);
         }
@@ -189,7 +217,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
             };
             // Apple Music reports False and does ignore seeks (Phase 2 verified); trust it.
             var canSeek = c.IsPlaybackPositionEnabled;
-            _lastState = state;
+            lock (_gate) _lastState = state;
             PlaybackChanged?.Invoke(new PlaybackSnapshot(
                 state, c.IsPlayEnabled, c.IsPauseEnabled,
                 c.IsPreviousEnabled, c.IsNextEnabled, canSeek));
