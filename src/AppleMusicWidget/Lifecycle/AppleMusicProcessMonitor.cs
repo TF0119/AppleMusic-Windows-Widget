@@ -36,30 +36,45 @@ public sealed class AppleMusicProcessMonitor : IDisposable
     public void CheckNow()
     {
         if (_disposed) return;
-        Process? found;
-        try { found = Process.GetProcessesByName(ProcessName).FirstOrDefault(); }
+        Process[] candidates;
+        try { candidates = Process.GetProcessesByName(ProcessName); }
         catch { return; }
 
         Process? started = null;
+        Process? replaced = null;
+        Process? duplicate = null;
         bool exited = false;
         lock (_gate)
         {
+            var found = candidates.FirstOrDefault();
+            // Dispose every Process instance we do not keep; each holds a handle.
+            foreach (var p in candidates)
+                if (!ReferenceEquals(p, found)) p.Dispose();
+
             if (found is not null)
             {
                 if (_current is null || _current.Id != found.Id)
                 {
                     // First sighting or restart with a new PID.
-                    if (_current is not null) exited = true;
+                    if (_current is not null) { replaced = _current; exited = true; }
                     _current = found;
                     started = found;
+                }
+                else
+                {
+                    // Same PID already tracked; this array element is a duplicate.
+                    duplicate = found;
                 }
             }
             else if (_current is not null)
             {
+                replaced = _current;
                 _current = null;
                 exited = true;
             }
         }
+
+        duplicate?.Dispose();
 
         if (started is not null)
         {
@@ -67,6 +82,7 @@ public sealed class AppleMusicProcessMonitor : IDisposable
             Started?.Invoke(started);
         }
         if (exited) Exited?.Invoke();
+        replaced?.Dispose();
     }
 
     private void HookExit(Process p)
