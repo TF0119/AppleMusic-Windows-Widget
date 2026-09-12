@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -113,25 +112,25 @@ public partial class TaskbarStrip : Window
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
-    // True while the top-level window at our center is the taskbar (higher z-band).
-    private bool IsOccludedByTaskbar()
+    // True while the top-level window at our center belongs to another process
+    // (taskbar in the promoted z-band, a shell flyout, or any other topmost window).
+    private bool IsOccluded()
     {
         if (_hwnd == IntPtr.Zero || !IsVisible) return false;
         if (!Native.GetWindowRect(_hwnd, out var r)) return false;
-        var at = Native.WindowFromPoint(new Native.POINT
+        var root = Native.GetAncestor(Native.WindowFromPoint(new Native.POINT
         {
             X = (r.Left + r.Right) / 2,
             Y = (r.Top + r.Bottom) / 2,
-        });
-        var root = Native.GetAncestor(at, Native.GA_ROOT);
-        var sb = new StringBuilder(64);
-        Native.GetClassNameW(root, sb, sb.Capacity);
-        return sb.ToString() is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+        }), Native.GA_ROOT);
+        if (root == _hwnd) return false;
+        Native.GetWindowThreadProcessId(root, out var pid);
+        return pid != Environment.ProcessId;
     }
 
     private void UpdateOcclusionWatch()
     {
-        if (IsOccludedByTaskbar())
+        if (IsOccluded())
         {
             if (!_occlusionWatch.IsEnabled) _occlusionWatch.Start();
         }
@@ -226,8 +225,8 @@ public partial class TaskbarStrip : Window
         public static extern IntPtr WindowFromPoint(POINT pt);
         [DllImport("user32.dll")]
         public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        public static extern int GetClassNameW(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT { public int X, Y; }
