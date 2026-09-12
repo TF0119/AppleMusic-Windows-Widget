@@ -67,7 +67,19 @@ public sealed class WidgetLifecycleController
             if (_settings.HideWhenAppleMusicClosed && _strip is not null)
                 _strip.WantVisible = false;
             Transition(AppState.WaitingForAppleMusic);
+            TrimDormantWorkingSet();
         });
+    }
+
+    /// <summary>Drop the dormant footprint once the widget is hidden with no session.</summary>
+    private static void TrimDormantWorkingSet()
+    {
+        var before = Environment.WorkingSet;
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Native.SetProcessWorkingSetSize(Native.GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1));
+        Debug.WriteLine($"[Lifecycle] ws trim: {before / 1048576.0:F1}MB -> {Environment.WorkingSet / 1048576.0:F1}MB");
     }
 
     /// <summary>Tray "show/hide" toggle. Only meaningful while Apple Music runs.</summary>
@@ -106,5 +118,13 @@ public sealed class WidgetLifecycleController
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.HasShutdownStarted) return;
         dispatcher.InvokeAsync(action);
+    }
+
+    private static class Native
+    {
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        public static extern System.IntPtr GetCurrentProcess();
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetProcessWorkingSetSize(System.IntPtr hProcess, System.IntPtr min, System.IntPtr max);
     }
 }
