@@ -43,6 +43,7 @@ public partial class TaskbarStrip : Window
 
         _taskbar.Changed += g => Dispatcher.InvokeAsync(() => { _geo = g; Reposition(); ApplyVisibility(); });
         _taskbar.FullscreenChanged += fs => Dispatcher.InvokeAsync(() => { _fullscreen = fs; ApplyVisibility(); });
+        _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(RaiseToTop);
         if (_taskbar.Current is { } g0) _geo = g0;
 
         _vm.PropertyChanged += OnVmPropertyChanged;
@@ -91,6 +92,14 @@ public partial class TaskbarStrip : Window
         // can land above us in the topmost band.
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, wPx, hPx,
             Native.SWP_NOACTIVATE);
+    }
+
+    // Clicking the taskbar raises Shell_TrayWnd above us in the topmost band; re-assert.
+    private void RaiseToTop()
+    {
+        if (_hwnd == IntPtr.Zero || !IsVisible) return;
+        Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
+            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
     private void ApplyVisibility()
@@ -161,8 +170,10 @@ public partial class TaskbarStrip : Window
         public const int GWL_EXSTYLE = -20;
         public const long WS_EX_TOOLWINDOW = 0x00000080;
         public const long WS_EX_NOACTIVATE = 0x08000000;
-        public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_NOACTIVATE = 0x0010;
         public static readonly IntPtr HWND_TOPMOST = new(-1);
 
         [DllImport("user32.dll")]

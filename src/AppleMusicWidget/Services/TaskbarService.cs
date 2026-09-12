@@ -21,6 +21,7 @@ public sealed class TaskbarService : IDisposable
 
     public event Action<TaskbarGeometry>? Changed;
     public event Action<bool>? FullscreenChanged;
+    public event Action? ForegroundChanged;
 
     private const int EventObjectDestroy = 0x8001;
     private const int EventObjectShow = 0x8002;
@@ -125,6 +126,7 @@ public sealed class TaskbarService : IDisposable
             if (eventType == EventSystemForeground)
             {
                 EvaluateFullscreen();
+                ForegroundChanged?.Invoke();
                 return;
             }
             if (eventType == EventObjectLocationChange && idObject != ObjidWindow) return; // ignore cursor/caret
