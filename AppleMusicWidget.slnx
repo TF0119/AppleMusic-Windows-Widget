@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AppleMusicWidget.Probe/AppleMusicWidget.Probe.csproj" />
+    <Project Path="src/AppleMusicWidget/AppleMusicWidget.csproj" />
+  </Folder>
+</Solution>
