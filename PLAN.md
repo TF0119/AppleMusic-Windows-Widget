@@ -52,7 +52,14 @@ UI/TaskbarStrip.xaml(.cs)         48px 帯（PlayerWidget を置換）
 UI/PlayerFlyout.xaml(.cs)         クリックで開くカード（旧 PlayerWidget のレイアウトを移植）
 ```
 
-### 0.6 フェーズへの影響
+### 0.6 進捗（2026-09-12 時点）
+
+- Phase 0〜2.5 完了、Phase 3 完了（結果は `docs/APPLE_MUSIC_CAPABILITY_MATRIX.md` の Phase 3 measurements）。
+  Private WS 40.7MB（再生中）、待機時 WS 34MB、再生中 CPU 0.04%。ハンドルリーク修正、WinForms 依存削除、ICU 除外。
+- Phase 3 で未実施: 1 時間連続再生（20 分まで確認）、起動/終了 50 回（20 回まで確認）→ Phase 7 の品質確認で実施。
+- 既知の未確認: トレイアイコンの実マウス右クリックでのメニュー表示（コード経路は WM_CONTEXTMENU 送信で確認済み）。
+
+### 0.7 フェーズへの影響
 
 - Phase 2.5（新設）: TaskbarService + TaskbarStrip + テーマ追従。フライアウトは骨組みのみ。
 - Phase 4（UI再現）: Fluent 仕上げ、ホバー / 押下、フライアウトのカード完成。

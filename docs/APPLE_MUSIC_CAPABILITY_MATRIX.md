@@ -46,6 +46,25 @@
 - Working set: ~183 MB in Debug — **over the 100 MB target**; Phase 3 must measure Release + investigate (WinForms load for NotifyIcon, WPF baseline, UIA).
 - Position tick observed advancing 1 s/s while Playing and frozen while Paused; resumes correctly.
 
+## Phase 3 measurements (Release build, taskbar strip)
+
+Method: `tools/measure-mem.ps1` (WS / Private Bytes / Private WS = Task Manager "Memory" / CPU over 10 s), `tools/soak.ps1`.
+
+| State | Before (Release) | After Phase 3 | Notes |
+|---|---|---|---|
+| Waiting (AM closed) WS | 141 MB | **34 MB** | WinForms removed (−25 MB), working-set trim on entering `WaitingForAppleMusic` |
+| Playing WS | 147 MB | 58 MB (after a trim) / 139 MB (fresh start, mostly shared framework pages) | |
+| Playing Private WS (Task Manager) | — | **40.7 MB** | InvariantGlobalization −7 MB |
+| Playing Private Bytes | 74.6 MB | 72.4 MB | |
+| CPU playing / paused / waiting | 0.04 % / 0.02 % / 0.01 % | same | 500 ms tick only while playing |
+| 100 track skips | WS +20 MB then flat | peak then settles | LOH copy removed in ArtworkProvider |
+| 20 AM start/stop cycles | handles +21 | **756→751** | `Process` disposal fix |
+| 20 min continuous play | Private +3 MB | — | no growth trend |
+
+Attribution (module image sizes, Release): `Microsoft.Windows.SDK.NET.dll` 23.7 MB (WinRT projection; only touched pages count), `PresentationFramework` 15 MB, CoreLib 15 MB. `PresentationFramework.Fluent` is loaded (0.9 MB image) because of `ThemeMode="System"`.
+
+Remaining ideas if needed later: drop `ThemeMode="System"` (strip uses its own brushes), lower TFM to 17763 to shrink the WinRT projection, ReadyToRun publish to cut JIT memory. Not pursued — targets met.
+
 ## Open questions for later phases
 
 - Whether `Artist` field separator is consistently ` — ` (em-dash) vs ` • ` — observed both; treat `Artist` string as display-ready "artist — album" line rather than parsing.
