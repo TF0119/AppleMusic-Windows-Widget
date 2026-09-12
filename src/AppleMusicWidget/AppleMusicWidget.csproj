@@ -8,6 +8,8 @@
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
+    <!-- No culture-specific formatting is used (times are formatted manually); skipping ICU saves memory. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>
