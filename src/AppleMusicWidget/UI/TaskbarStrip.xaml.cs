@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Color = System.Windows.Media.Color;
 using AppleMusicWidget.Models;
 using AppleMusicWidget.Services;
@@ -29,6 +31,7 @@ public partial class TaskbarStrip : Window
     private TaskbarService.TaskbarGeometry _geo;
     private bool _fullscreen;
     private bool _collides;
+    private readonly DispatcherTimer _occlusionWatch = new() { Interval = TimeSpan.FromSeconds(1) };
 
     public TaskbarStrip(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings)
     {
@@ -43,7 +46,8 @@ public partial class TaskbarStrip : Window
 
         _taskbar.Changed += g => Dispatcher.InvokeAsync(() => { _geo = g; Reposition(); ApplyVisibility(); });
         _taskbar.FullscreenChanged += fs => Dispatcher.InvokeAsync(() => { _fullscreen = fs; ApplyVisibility(); });
-        _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(RaiseToTop);
+        _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(OnForegroundChanged);
+        _occlusionWatch.Tick += (_, _) => { RaiseToTop(); UpdateOcclusionWatch(); };
         if (_taskbar.Current is { } g0) _geo = g0;
 
         _vm.PropertyChanged += OnVmPropertyChanged;
@@ -94,6 +98,13 @@ public partial class TaskbarStrip : Window
             Native.SWP_NOACTIVATE);
     }
 
+    // Shell flyouts promote the taskbar to a higher z-band; while occluded, keep re-asserting.
+    private void OnForegroundChanged()
+    {
+        RaiseToTop();
+        UpdateOcclusionWatch();
+    }
+
     // Clicking the taskbar raises Shell_TrayWnd above us in the topmost band; re-assert.
     private void RaiseToTop()
     {
@@ -102,11 +113,37 @@ public partial class TaskbarStrip : Window
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
+    // True while the top-level window at our center is the taskbar (higher z-band).
+    private bool IsOccludedByTaskbar()
+    {
+        if (_hwnd == IntPtr.Zero || !IsVisible) return false;
+        if (!Native.GetWindowRect(_hwnd, out var r)) return false;
+        var at = Native.WindowFromPoint(new Native.POINT
+        {
+            X = (r.Left + r.Right) / 2,
+            Y = (r.Top + r.Bottom) / 2,
+        });
+        var root = Native.GetAncestor(at, Native.GA_ROOT);
+        var sb = new StringBuilder(64);
+        Native.GetClassNameW(root, sb, sb.Capacity);
+        return sb.ToString() is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+    }
+
+    private void UpdateOcclusionWatch()
+    {
+        if (IsOccludedByTaskbar())
+        {
+            if (!_occlusionWatch.IsEnabled) _occlusionWatch.Start();
+        }
+        else _occlusionWatch.Stop();
+    }
+
     private void ApplyVisibility()
     {
         var show = WantVisible && _geo.IsVisible && !_fullscreen && !_collides;
         if (show && !IsVisible) Show();
         else if (!show && IsVisible) Hide();
+        UpdateOcclusionWatch();
     }
 
     // ---------- theme (follows SystemUsesLightTheme — the taskbar's theme) ----------
@@ -174,6 +211,7 @@ public partial class TaskbarStrip : Window
         public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOZORDER = 0x0004;
         public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint GA_ROOT = 2;
         public static readonly IntPtr HWND_TOPMOST = new(-1);
 
         [DllImport("user32.dll")]
@@ -182,5 +220,19 @@ public partial class TaskbarStrip : Window
         public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
         [DllImport("user32.dll")]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll")]
+        public static extern IntPtr WindowFromPoint(POINT pt);
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int GetClassNameW(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X, Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int Left, Top, Right, Bottom; }
     }
 }
