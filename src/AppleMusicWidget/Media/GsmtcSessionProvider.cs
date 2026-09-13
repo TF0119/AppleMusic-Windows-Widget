@@ -27,6 +27,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
     private string? _lastTrackKey;
+    private IRandomAccessStreamReference? _lastThumbnail;
     private PlaybackState _lastState = PlaybackState.Unknown;
     private bool _sessionsHooked;
     private bool _wantConnection;
@@ -114,6 +115,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
             if (_session is not null) return; // bound while we were enumerating
             _session = s;
             _lastTrackKey = null; // force full emit on first bind
+            _lastThumbnail = null;
             _lastState = PlaybackState.Unknown;
         }
         try
@@ -136,6 +138,7 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
             s = _session;
             _session = null;
             _lastTrackKey = null;
+            _lastThumbnail = null;
             _lastState = PlaybackState.Unknown;
         }
         if (s is null) return;
@@ -189,15 +192,22 @@ public sealed class GsmtcSessionProvider : IMediaSessionProvider
         {
             var p = await s.TryGetMediaPropertiesAsync();
             var track = TrackInfo.Create(p.Title ?? "", p.Artist ?? "");
+            bool emitTrack, emitArt;
             lock (_gate)
             {
                 if (!ReferenceEquals(_session, s)) return; // rebound mid-await
-                // MediaPropertiesChanged fires several times per track; dedupe by key.
-                if (!force && track.Key == _lastTrackKey) return;
-                _lastTrackKey = track.Key;
+                // MediaPropertiesChanged fires several times per track, and the real
+                // thumbnail often arrives only in a LATER event after the track key is
+                // already set — so the two channels dedupe independently. Returning
+                // early on a same key must not swallow a new thumbnail (fixes: flyout
+                // and strip showing the previous track's jacket).
+                emitTrack = force || track.Key != _lastTrackKey;
+                emitArt = !ReferenceEquals(p.Thumbnail, _lastThumbnail);
+                if (emitTrack) _lastTrackKey = track.Key;
+                if (emitArt) _lastThumbnail = p.Thumbnail;
             }
-            TrackChanged?.Invoke(track);
-            ArtworkChanged?.Invoke(p.Thumbnail);
+            if (emitTrack) TrackChanged?.Invoke(track);
+            if (emitArt) ArtworkChanged?.Invoke(p.Thumbnail);
         }
         catch (Exception ex) { Log($"media props failed: {ex.Message}"); }
     }
