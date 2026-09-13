@@ -9,7 +9,7 @@ using AppleMusicWidget.Models;
 namespace AppleMusicWidget.Services;
 
 /// <summary>
-/// Taskbar tray icon via Shell_NotifyIcon + a message-only HwndSource.
+/// Taskbar tray icon via Shell_NotifyIcon + a hidden top-level HwndSource.
 /// Minimal menu per PLAN §9.6; no WinForms dependency.
 /// </summary>
 public sealed class TrayService : IDisposable
@@ -30,6 +30,7 @@ public sealed class TrayService : IDisposable
     private const int WmRButtonUp = 0x0205;
     private const int WmContextMenu = 0x007B;
     private const int NinSelect = 0x0400;
+    private const int WsExToolWindow = 0x00000080;
     private const uint ImageIcon = 1;
     private const uint LrLoadFromFile = 0x0010;
 
@@ -46,7 +47,7 @@ public sealed class TrayService : IDisposable
         var p = new HwndSourceParameters("AppleMusicWidgetTray")
         {
             WindowStyle = 0,
-            ParentWindow = new IntPtr(-3), // HWND_MESSAGE
+            ExtendedWindowStyle = WsExToolWindow,
         };
         _source = new HwndSource(p);
         _source.AddHook(WndProc);
