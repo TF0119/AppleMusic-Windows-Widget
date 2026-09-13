@@ -22,7 +22,7 @@ $found = $false
         $len = [W.U32]::GetWindowTextLength($h)
         $sb = New-Object System.Text.StringBuilder ($len + 1)
         [W.U32]::GetWindowText($h, $sb, $len + 1) | Out-Null
-        $r = New-Object W.RECT
+        $r = New-Object 'W.U32+RECT'
         [W.U32]::GetWindowRect($h, [ref]$r) | Out-Null
         Write-Host ("hwnd=$h visible=$vis title='$($sb.ToString())' rect=$($r.Left),$($r.Top)-$($r.Right),$($r.Bottom)")
         $script:found = $true
