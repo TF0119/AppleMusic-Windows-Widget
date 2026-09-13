@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -36,6 +37,8 @@ public sealed class TaskbarService : IDisposable
     private readonly DispatcherTimer _debounce;
     private readonly DispatcherTimer _missingRetry;
     private readonly Native.WinEventProc _winEventProc; // field: must outlive the hooks
+    private readonly HwndSource _shellHookSource;
+    private readonly int _shellHookMessage;
 
     private IntPtr _tray, _trayNotify, _start, _appArea;
     private IntPtr _hLocHook, _hObjHook, _hFgHook;
@@ -49,6 +52,16 @@ public sealed class TaskbarService : IDisposable
     public TaskbarService()
     {
         _winEventProc = OnWinEvent;
+        var shellHookParameters = new HwndSourceParameters("AppleMusicWidgetShellHook")
+        {
+            WindowStyle = 0,
+            ExtendedWindowStyle = Native.WS_EX_TOOLWINDOW,
+        };
+        _shellHookSource = new HwndSource(shellHookParameters);
+        _shellHookSource.AddHook(OnShellHookMessage);
+        _shellHookMessage = unchecked((int)Native.RegisterWindowMessage("SHELLHOOK"));
+        if (_shellHookMessage == 0 || !Native.RegisterShellHookWindow(_shellHookSource.Handle))
+            Log($"RegisterShellHookWindow failed: {Marshal.GetLastWin32Error()}");
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _debounce.Tick += (_, _) => { _debounce.Stop(); Recompute(); };
         _missingRetry = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -148,6 +161,16 @@ public sealed class TaskbarService : IDisposable
             }
         }
         catch (Exception ex) { Log($"OnWinEvent failed: {ex.Message}"); }
+    }
+
+    private IntPtr OnShellHookMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == _shellHookMessage && wParam.ToInt64() is Native.HSHELL_WINDOWACTIVATED or Native.HSHELL_RUDEAPPACTIVATED)
+        {
+            EvaluateFullscreen();
+            ForegroundChanged?.Invoke();
+        }
+        return IntPtr.Zero;
     }
 
     private void OnSystemEvent(object? sender, EventArgs e) => ScheduleRecompute();
@@ -264,6 +287,9 @@ public sealed class TaskbarService : IDisposable
         Unhook(ref _hLocHook);
         Unhook(ref _hObjHook);
         Unhook(ref _hFgHook);
+        try { Native.DeregisterShellHookWindow(_shellHookSource.Handle); } catch { }
+        _shellHookSource.RemoveHook(OnShellHookMessage);
+        _shellHookSource.Dispose();
     }
 
     private static class Native
@@ -271,6 +297,9 @@ public sealed class TaskbarService : IDisposable
         public const int MONITOR_DEFAULTTONEAREST = 2;
         public const int GWL_EXSTYLE = -20;
         public const int GWL_STYLE = -16;
+        public const int WS_EX_TOOLWINDOW = 0x00000080;
+        public const long HSHELL_WINDOWACTIVATED = 4;
+        public const long HSHELL_RUDEAPPACTIVATED = 0x8004;
 
         public delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
             int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
@@ -300,6 +329,12 @@ public sealed class TaskbarService : IDisposable
             WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
         [DllImport("user32.dll")]
         public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterShellHookWindow(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        public static extern bool DeregisterShellHookWindow(IntPtr hwnd);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern uint RegisterWindowMessage(string message);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int Left, Top, Right, Bottom; }
