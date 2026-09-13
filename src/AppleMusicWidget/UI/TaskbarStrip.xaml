@@ -56,36 +56,57 @@
                 <ColumnDefinition Width="8" />
             </Grid.ColumnDefinitions>
 
-            <!-- 32x32 artwork / placeholder with music note -->
-            <Grid Grid.Column="1" Width="32" Height="32" VerticalAlignment="Center">
-                <Border CornerRadius="4" Background="#20808080">
-                    <TextBlock Text="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="14"
-                               Foreground="{DynamicResource TxtSecondary}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Border>
-                <Image x:Name="ArtworkImage" Source="{Binding Artwork}"
-                       Stretch="UniformToFill" SizeChanged="OnArtworkSizeChanged" />
-            </Grid>
+            <!-- Track info: hover pill like a taskbar button; click toggles the flyout -->
+            <Border Grid.Column="1" Grid.ColumnSpan="3" CornerRadius="4"
+                    Margin="-4,3,-2,3" Padding="4,0,2,0" Background="Transparent">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource BtnHover}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32" />
+                        <ColumnDefinition Width="10" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
 
-            <!-- Title / subtitle / 2px progress line -->
-            <Grid Grid.Column="3" VerticalAlignment="Center" Margin="0,3,0,3">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="4" />
-                </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="{Binding Title}" ToolTip="{Binding Title}"
-                           Foreground="{DynamicResource TxtPrimary}" FontSize="12" FontWeight="SemiBold"
-                           TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Row="1" Text="{Binding Subtitle}" ToolTip="{Binding Subtitle}"
-                           Foreground="{DynamicResource TxtSecondary}" FontSize="11"
-                           TextTrimming="CharacterEllipsis" />
-                <Grid Grid.Row="2" x:Name="ProgressTrack" Margin="0,2,0,0">
-                    <Rectangle Height="2" Fill="#20808080" VerticalAlignment="Center" />
-                    <Rectangle x:Name="ProgressFill" Height="2" Fill="{DynamicResource AccentBrush}"
-                               HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" />
+                    <!-- 32x32 artwork / placeholder with music note -->
+                    <Grid Width="32" Height="32" VerticalAlignment="Center">
+                        <Border CornerRadius="4" Background="#20808080">
+                            <TextBlock Text="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="14"
+                                       Foreground="{DynamicResource TxtSecondary}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <Image x:Name="ArtworkImage" Source="{Binding Artwork}"
+                               Stretch="UniformToFill" SizeChanged="OnArtworkSizeChanged" />
+                    </Grid>
+
+                    <!-- Title / subtitle / 2px progress line -->
+                    <Grid Grid.Column="2" VerticalAlignment="Center" Margin="0,3,0,3">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="4" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="{Binding Title}" ToolTip="{Binding Title}"
+                                   Foreground="{DynamicResource TxtPrimary}" FontSize="12" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1" Text="{Binding Subtitle}" ToolTip="{Binding Subtitle}"
+                                   Foreground="{DynamicResource TxtSecondary}" FontSize="11"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Grid Grid.Row="2" x:Name="ProgressTrack" Margin="0,2,0,0">
+                            <Rectangle Height="2" Fill="#20808080" VerticalAlignment="Center" />
+                            <Rectangle x:Name="ProgressFill" Height="2" Fill="{DynamicResource AccentBrush}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" />
+                        </Grid>
+                    </Grid>
                 </Grid>
-            </Grid>
+            </Border>
 
             <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Style="{StaticResource StripButton}" Content="&#xE892;"
