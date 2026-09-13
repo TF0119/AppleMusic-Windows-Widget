@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using AppleMusicWidget.Models;
@@ -36,6 +37,8 @@ public partial class PlayerFlyout : Window
     private bool _queueVisible;
     private bool _queueLoading;
     private bool _suppressForegroundClose;
+    private int _queueRefreshVersion;
+    private bool _queueReloadPending;
 
     /// <summary>Set by the owner; invoked when the track info area is clicked.</summary>
     public Action? OpenAppleMusicRequested { get; set; }
@@ -187,6 +190,19 @@ public partial class PlayerFlyout : Window
     {
         if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
             UpdateProgress();
+        if (e.PropertyName == nameof(PlayerViewModel.Title) && _queueVisible && IsVisible)
+        {
+            var version = ++_queueRefreshVersion;
+            _ = RefreshQueueAfterTrackChangeAsync(version);
+        }
+    }
+
+    private async Task RefreshQueueAfterTrackChangeAsync(int version)
+    {
+        await Task.Delay(300);
+        if (version != _queueRefreshVersion || !_queueVisible || !IsVisible) return;
+        if (_queueLoading) { _queueReloadPending = true; return; }
+        await LoadQueueAsync();
     }
 
     private void UpdateProgress()
@@ -211,6 +227,8 @@ public partial class PlayerFlyout : Window
     private void ShowPlayerView()
     {
         _queueVisible = false;
+        _queueRefreshVersion++;
+        _queueReloadPending = false;
         PlayerView.Visibility = Visibility.Visible;
         QueueView.Visibility = Visibility.Collapsed;
         Height = HeightDip;
@@ -233,12 +251,23 @@ public partial class PlayerFlyout : Window
             if (!_queueVisible || !IsVisible) return;
             if (result is null)
                 QueueStatus.Text = "再生待ちリストを取得できませんでした";
-            else if (result.Count == 0)
-                QueueStatus.Text = "再生待ちの曲はありません";
+            else if (result.History.Count == 0 && result.Upcoming.Count == 0)
+                QueueStatus.Text = "再生待ちと履歴はありません";
             else
             {
-                QueueItems.ItemsSource = result;
-                QueueStatus.Text = $"{result.Count} 曲";
+                var rows = new List<PlayQueueItem>();
+                if (result.History.Count > 0)
+                {
+                    rows.Add(new PlayQueueItem("履歴", "", "", true));
+                    for (var i = result.History.Count - 1; i >= 0; i--) rows.Add(result.History[i]);
+                }
+                var upcomingIndex = rows.Count;
+                rows.Add(new PlayQueueItem("次に再生", "", "", true));
+                rows.AddRange(result.Upcoming);
+                QueueItems.ItemsSource = rows;
+                QueueStatus.Text = $"次に再生 {result.Upcoming.Count} 曲 / 履歴 {result.History.Count} 曲";
+                QueueItems.UpdateLayout();
+                FindVisualChild<ScrollViewer>(QueueItems)?.ScrollToVerticalOffset(upcomingIndex);
             }
         }
         finally
@@ -247,7 +276,22 @@ public partial class PlayerFlyout : Window
             await Task.Delay(100);
             _suppressForegroundClose = false;
             _queueLoading = false;
+            var reload = _queueReloadPending && _queueVisible && IsVisible;
+            _queueReloadPending = false;
+            if (reload) _ = LoadQueueAsync();
         }
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T t) return t;
+            var found = FindVisualChild<T>(child);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private void OnTrackClick(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
