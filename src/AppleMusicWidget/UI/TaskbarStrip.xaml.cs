@@ -166,8 +166,12 @@ public partial class TaskbarStrip : Window
     private void ApplyVisibility()
     {
         var show = WantVisible && _geo.IsVisible && !_fullscreen && !_collides;
-        if (show && !IsVisible) Show();
-        else if (!show && IsVisible) Hide();
+        if (show && !IsVisible)
+        {
+            Show();
+            show = WantVisible && _geo.IsVisible && !_fullscreen && !_collides;
+        }
+        if (!show) Hide();
         if (!show) _flyout?.Hide(); // no anchor while the strip is hidden
         UpdateOcclusionWatch();
     }
