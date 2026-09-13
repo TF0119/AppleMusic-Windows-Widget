@@ -4,7 +4,7 @@
         Width="350" Height="150"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False"
-        ResizeMode="NoResize">
+        ResizeMode="NoResize" Topmost="True">
     <!-- Phase 4: opens upward from TaskbarStrip, closes on focus loss.
          Layout = former desktop PlayerWidget card (PLAN §3.3). -->
     <Window.Resources>

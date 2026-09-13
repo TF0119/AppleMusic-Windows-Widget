@@ -27,6 +27,7 @@ public partial class TaskbarStrip : Window
     private readonly WidgetSettings _settings;
 
     private IntPtr _hwnd;
+    private PlayerFlyout? _flyout;
     private TaskbarService.TaskbarGeometry _geo;
     private bool _fullscreen;
     private bool _collides;
@@ -142,6 +143,7 @@ public partial class TaskbarStrip : Window
         var show = WantVisible && _geo.IsVisible && !_fullscreen && !_collides;
         if (show && !IsVisible) Show();
         else if (!show && IsVisible) Hide();
+        if (!show) _flyout?.Hide(); // no anchor while the strip is hidden
         UpdateOcclusionWatch();
     }
 
@@ -180,8 +182,13 @@ public partial class TaskbarStrip : Window
             new Rect(0, 0, ArtworkImage.ActualWidth, ArtworkImage.ActualHeight), 4, 4);
     }
 
-    private void OnBodyClick(object sender, MouseButtonEventArgs e) =>
-        Debug.WriteLine("flyout: TODO"); // Phase 4
+    // The transport buttons handle their own clicks; only the text/artwork area
+    // reaches Root -> toggle the flyout.
+    private void OnBodyClick(object sender, MouseButtonEventArgs e)
+    {
+        _flyout ??= new PlayerFlyout(_vm, _taskbar, _settings);
+        _flyout.Toggle();
+    }
 
     private static class Theme
     {
