@@ -65,6 +65,19 @@ Attribution (module image sizes, Release): `Microsoft.Windows.SDK.NET.dll` 23.7 
 
 Remaining ideas if needed later: drop `ThemeMode="System"` (strip uses its own brushes), lower TFM to 17763 to shrink the WinRT projection, ReadyToRun publish to cut JIT memory. Not pursued — targets met.
 
+## Phase 7 measurements (Release build, 2026-09-13)
+
+Method: `tools/measure-mem.ps1`, `tools/soak.ps1`, real Apple Music playback, and physical mouse input for shell integration checks.
+
+| Test | Result | Notes |
+|---|---|---|
+| Paused, 10 s | Private WS 37.5 MB, CPU 0.0146% | One visible 340×48 strip; flyout not created until clicked |
+| 100 track skips | Private WS 38.6→47.8 MB | Rose during initial artwork/cache loading, then stayed around 45–48 MB |
+| 50 start/stop cycles | Private Bytes 83.4→84.6 MB | No growth trend; waiting-state samples had trimmed Private WS 5.5–9.1 MB |
+| 60 min real playback | Private WS 39.3→39.1 MB, CPU max 0.0488% | Tracks advanced throughout; Private Bytes 73.6→93.2 MB |
+
+Shell integration passed for Explorer restart, real tray-icon right click and re-registration, taskbar auto-hide/reveal, foreground fullscreen hide/restore, light/dark theme switching, compact 136 DIP layout, minimum-width hiding, and Apple Music minimization. Phase 7 exposed and fixed three defects: the message-only tray HWND missing `TaskbarCreated`, unreliable fullscreen detection without a shell-hook fallback, and first-show collision leaking the strip at WPF's default position.
+
 ## Open questions for later phases
 
 - Whether `Artist` field separator is consistently ` — ` (em-dash) vs ` • ` — observed both; treat `Artist` string as display-ready "artist — album" line rather than parsing.
