@@ -157,6 +157,8 @@ public partial class TaskbarStrip : Window
         Set("TxtDisabled", light ? Color.FromArgb(0x66, 0x00, 0x00, 0x00) : Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF));
         Set("BtnHover", light ? Color.FromArgb(0x0A, 0x00, 0x00, 0x00) : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
         Set("BtnPressed", light ? Color.FromArgb(0x14, 0x00, 0x00, 0x00) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+        // Track area hover needs to be clearly visible over the taskbar.
+        Set("TrackHover", light ? Color.FromArgb(0x17, 0x00, 0x00, 0x00) : Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
         Resources["AccentBrush"] = SystemParameters.WindowGlassBrush;
     }
 
