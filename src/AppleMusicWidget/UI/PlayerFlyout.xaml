@@ -2,22 +2,26 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Width="350" Height="150"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        WindowStyle="None" AllowsTransparency="False" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False"
         ResizeMode="NoResize" Topmost="True">
-    <!-- Phase 4: opens upward from TaskbarStrip, closes on focus loss.
+    <!-- Phase 4b: real Fluent material — DWM acrylic (DWMSBT_TRANSIENTWINDOW) +
+         rounded overlay corners are applied in OnSourceInitialized; FlyoutBg is a
+         mostly-transparent tint so the system material shows through.
          Layout = former desktop PlayerWidget card (PLAN §3.3). -->
     <Window.Resources>
         <Style x:Key="FlatButton" TargetType="Button">
-            <Setter Property="Width" Value="34" />
-            <Setter Property="Height" Value="28" />
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="{DynamicResource TxtPrimary}" />
-            <Setter Property="FontSize" Value="13" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="6">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="4">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -35,9 +39,18 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="PlayPauseButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Content" Value="&#xE768;" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                    <Setter Property="Content" Value="&#xE769;" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
-    <Border x:Name="Root" CornerRadius="12" Background="{DynamicResource FlyoutBg}"
+    <Border x:Name="Root" CornerRadius="8" Background="{DynamicResource FlyoutBg}"
             BorderBrush="{DynamicResource FlyoutBorder}" BorderThickness="1">
         <Grid Margin="14,12,14,10">
             <Grid.RowDefinitions>
@@ -58,7 +71,7 @@
 
             <StackPanel Grid.Row="0" Grid.Column="2" VerticalAlignment="Top">
                 <TextBlock Text="{Binding Title}" ToolTip="{Binding Title}"
-                           Foreground="{DynamicResource TxtPrimary}" FontSize="15" FontWeight="SemiBold"
+                           Foreground="{DynamicResource TxtPrimary}" FontSize="14" FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis" />
                 <TextBlock Text="{Binding Subtitle}" ToolTip="{Binding Subtitle}"
                            Foreground="{DynamicResource TxtSecondary}" FontSize="12" Margin="0,2,0,0"
@@ -70,7 +83,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{Binding ElapsedText}"
-                               Foreground="{DynamicResource TxtSecondary}" FontSize="10" VerticalAlignment="Center" />
+                               Foreground="{DynamicResource TxtSecondary}" FontSize="11" VerticalAlignment="Center" />
                     <!-- Apple Music reports IsPlaybackPositionEnabled=false: a passive
                          2px progress line (same look as the strip), not a slider. -->
                     <Grid Grid.Column="1" x:Name="ProgressTrack" VerticalAlignment="Center"
@@ -80,18 +93,17 @@
                                    HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" />
                     </Grid>
                     <TextBlock Grid.Column="2" Text="{Binding RemainingText}"
-                               Foreground="{DynamicResource TxtSecondary}" FontSize="10" VerticalAlignment="Center" />
+                               Foreground="{DynamicResource TxtSecondary}" FontSize="11" VerticalAlignment="Center" />
                 </Grid>
             </StackPanel>
 
             <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
                         Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-                <Button Style="{StaticResource FlatButton}" Content="…" IsEnabled="False" ToolTip="Phase 5" />
-                <Button Style="{StaticResource FlatButton}" Content="⏮" Command="{Binding PreviousCommand}" />
-                <Button Style="{StaticResource FlatButton}" Content="{Binding PlayPauseGlyph}"
-                        FontSize="15" Command="{Binding PlayPauseCommand}" />
-                <Button Style="{StaticResource FlatButton}" Content="⏭" Command="{Binding NextCommand}" />
-                <Button Style="{StaticResource FlatButton}" Content="☰" IsEnabled="False" ToolTip="Phase 5" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE712;" IsEnabled="False" ToolTip="Phase 5" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE892;" Command="{Binding PreviousCommand}" />
+                <Button Style="{StaticResource PlayPauseButton}" Command="{Binding PlayPauseCommand}" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE893;" Command="{Binding NextCommand}" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE8FD;" IsEnabled="False" ToolTip="Phase 5" />
             </StackPanel>
         </Grid>
     </Border>

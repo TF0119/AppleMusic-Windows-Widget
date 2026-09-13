@@ -78,7 +78,22 @@ public partial class PlayerFlyout : Window
         var ex = Native.GetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE);
         Native.SetWindowLongPtr(_hwnd, Native.GWL_EXSTYLE,
             new IntPtr(ex.ToInt64() | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE));
+        ApplyDwmAttributes();
         Reposition();
+    }
+
+    // Real Fluent material instead of an imitation: rounded overlay corners, the
+    // transient acrylic system backdrop (same as Start / volume flyouts), and no
+    // DWM border line. The window is a normal non-layered HWND (AllowsTransparency
+    // is off); transparent pixels in FlyoutBg let the backdrop show through.
+    private void ApplyDwmAttributes()
+    {
+        int corner = Native.DWMWCP_ROUND;
+        _ = Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
+        int backdrop = Native.DWMSBT_TRANSIENTWINDOW;
+        _ = Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_SYSTEMBACKDROP_TYPE, ref backdrop, sizeof(int));
+        int border = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
+        _ = Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_BORDER_COLOR, ref border, sizeof(int));
     }
 
     private void Reposition()
@@ -143,7 +158,8 @@ public partial class PlayerFlyout : Window
     private void ApplyTheme()
     {
         bool light = Theme.SystemUsesLightTheme;
-        Set("FlyoutBg", light ? Color.FromArgb(0xF9, 0xF9, 0xF9, 0xF9) : Color.FromArgb(0xF2, 0x2B, 0x2B, 0x2B));
+        // Mostly-transparent tints: the acrylic system backdrop provides the material.
+        Set("FlyoutBg", light ? Color.FromArgb(0x40, 0xF9, 0xF9, 0xF9) : Color.FromArgb(0x40, 0x20, 0x20, 0x20));
         Set("FlyoutBorder", light ? Color.FromArgb(0x1A, 0x00, 0x00, 0x00) : Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
         Set("TxtPrimary", light ? Color.FromArgb(0xE4, 0x00, 0x00, 0x00) : Colors.White);
         Set("TxtSecondary", light ? Color.FromArgb(0x9B, 0x00, 0x00, 0x00) : Color.FromArgb(0xC5, 0xFF, 0xFF, 0xFF));
@@ -206,6 +222,11 @@ public partial class PlayerFlyout : Window
         public const int WM_NCLBUTTONDOWN = 0x00A1;
         public const int WM_NCRBUTTONDOWN = 0x00A4;
         public const int WM_NCMBUTTONDOWN = 0x00A7;
+        public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        public const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+        public const int DWMWA_BORDER_COLOR = 34;
+        public const int DWMWCP_ROUND = 2;
+        public const int DWMSBT_TRANSIENTWINDOW = 3;
         public static readonly IntPtr HWND_TOPMOST = new(-1);
 
         public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -224,6 +245,8 @@ public partial class PlayerFlyout : Window
         public static extern bool UnhookWindowsHookEx(IntPtr hhk);
         [DllImport("user32.dll")]
         public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT { public int X, Y; }
