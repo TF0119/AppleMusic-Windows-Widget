@@ -28,11 +28,18 @@ public partial class App : System.Windows.Application
 #endif
 
         _settings = _settingsService.Load();
+        _ = StartupService.TrySetEnabled(_settings.LaunchAtStartup);
         _taskbar = new TaskbarService(); // UI thread: SetWinEventHook needs this message loop
         _lifecycle = new WidgetLifecycleController(_settings, new GsmtcSessionProvider(), _taskbar);
 
         _tray = new TrayService(_settings);
         _tray.ToggleVisibilityRequested += () => _lifecycle.ToggleWidgetVisibility();
+        _tray.LaunchAtStartupChanged += enabled =>
+        {
+            if (!StartupService.TrySetEnabled(enabled)) return;
+            _settings.LaunchAtStartup = enabled;
+            _settingsService.Save(_settings);
+        };
         _tray.ExitRequested += () => Shutdown();
 
         _monitor = new AppleMusicProcessMonitor();

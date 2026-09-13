@@ -15,6 +15,7 @@ namespace AppleMusicWidget.Services;
 public sealed class TrayService : IDisposable
 {
     public event Action? ToggleVisibilityRequested;
+    public event Action<bool>? LaunchAtStartupChanged;
     public event Action? ExitRequested;
 
     private const uint NimAdd = 0x0000;
@@ -32,6 +33,7 @@ public sealed class TrayService : IDisposable
     private const uint ImageIcon = 1;
     private const uint LrLoadFromFile = 0x0010;
 
+    private readonly WidgetSettings _settings;
     private readonly HwndSource _source;
     private readonly IntPtr _hwnd;
     private readonly int _callbackMessage = WmApp + 1;
@@ -40,6 +42,7 @@ public sealed class TrayService : IDisposable
 
     public TrayService(WidgetSettings settings)
     {
+        _settings = settings;
         var p = new HwndSourceParameters("AppleMusicWidgetTray")
         {
             WindowStyle = 0,
@@ -112,9 +115,17 @@ public sealed class TrayService : IDisposable
         var menu = new ContextMenu();
         var toggle = new MenuItem { Header = "表示 / 非表示" };
         toggle.Click += (_, _) => ToggleVisibilityRequested?.Invoke();
+        var startup = new MenuItem
+        {
+            Header = "Windows 起動時に自動起動",
+            IsCheckable = true,
+            IsChecked = _settings.LaunchAtStartup,
+        };
+        startup.Click += (_, _) => LaunchAtStartupChanged?.Invoke(startup.IsChecked);
         var exit = new MenuItem { Header = "終了" };
         exit.Click += (_, _) => ExitRequested?.Invoke();
         menu.Items.Add(toggle);
+        menu.Items.Add(startup);
         menu.Items.Add(new Separator());
         menu.Items.Add(exit);
         // Tray-menu convention: foreground our window so the menu dismisses on outside click.
