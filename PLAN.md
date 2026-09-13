@@ -59,6 +59,11 @@ UI/PlayerFlyout.xaml(.cs)         クリックで開くカード（旧 PlayerWid
 - Phase 3 で未実施: 1 時間連続再生（20 分まで確認）、起動/終了 50 回（20 回まで確認）→ Phase 7 の品質確認で実施。
 - 既知の未確認: トレイアイコンの実マウス右クリックでのメニュー表示（コード経路は WM_CONTEXTMENU 送信で確認済み）。
 
+### 0.6.1 既知の制約（Windows 11 シェル仕様由来、回避不可）
+
+- **スタートメニュー/検索を開いている間、帯はタスクバーの後ろに隠れる。** フライアウト表示中、Explorer は `Shell_TrayWnd` を通常の TOPMOST より上の z-band に昇格させる。外部プロセスがこの帯を越える手段は `CreateWindowInBand`（uiAccess＋コード署名必須）か explorer.exe への DLL インジェクションのみで、本アプリでは採用しない。フライアウトを閉じると遮蔽ウォッチドッグ（`TaskbarStrip.IsOccluded` + 1 秒間隔の再主張）が自動復帰する。
+- `Shell_TrayWnd` への子ウィンドウ埋め込み（TrafficMonitor 方式）は Win11 25H2 で描画が抑止されることを spike で確認済み（`tools/ChildSpike`）。以後の Windows 更新でこの挙動が変わる可能性はある。
+
 ### 0.7 フェーズへの影響
 
 - Phase 2.5（新設）: TaskbarService + TaskbarStrip + テーマ追従。フライアウトは骨組みのみ。
