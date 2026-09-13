@@ -2,8 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using AppleMusicWidget.Models;
@@ -32,7 +30,6 @@ public partial class PlayerFlyout : Window
     private readonly Window _strip; // anchor: clicks inside it must not count as "outside"
 
     private IntPtr _hwnd;
-    private bool _isScrubbing;
     private Native.HookProc? _mouseProc; // field: must outlive the hook
     private IntPtr _mouseHook;
 
@@ -61,20 +58,7 @@ public partial class PlayerFlyout : Window
         Closed += (_, _) => RemoveMouseHook();
 
         _vm.PropertyChanged += OnVmPropertyChanged;
-        Loaded += (_, _) =>
-        {
-            SeekSlider.Value = _vm.ProgressFraction;
-            SeekSlider.ApplyTemplate();
-            if (SeekSlider.Template.FindName("PART_Track", SeekSlider) is Track track)
-            {
-                track.Thumb.DragStarted += (_, _) => _isScrubbing = true;
-                track.Thumb.DragCompleted += (_, _) =>
-                {
-                    _vm.SeekTo(SeekSlider.Value);
-                    _isScrubbing = false;
-                };
-            }
-        };
+        ProgressTrack.SizeChanged += (_, _) => UpdateProgress();
     }
 
     /// <summary>Called by the strip's body click.</summary>
@@ -166,25 +150,22 @@ public partial class PlayerFlyout : Window
         Set("TxtDisabled", light ? Color.FromArgb(0x66, 0x00, 0x00, 0x00) : Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF));
         Set("BtnHover", light ? Color.FromArgb(0x0A, 0x00, 0x00, 0x00) : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
         Set("BtnPressed", light ? Color.FromArgb(0x14, 0x00, 0x00, 0x00) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+        Resources["AccentBrush"] = SystemParameters.WindowGlassBrush;
     }
 
     private void Set(string key, Color c) => Resources[key] = new SolidColorBrush(c);
 
-    // ---------- seek slider / artwork clip ----------
+    // ---------- progress line / artwork clip ----------
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction) && !_isScrubbing)
-            SeekSlider.Value = _vm.ProgressFraction;
+        if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
+            UpdateProgress();
     }
 
-    private void OnSeekDown(object sender, MouseButtonEventArgs e) => _isScrubbing = true;
-
-    private void OnSeekUp(object sender, MouseButtonEventArgs e)
+    private void UpdateProgress()
     {
-        if (!_isScrubbing) return;
-        _vm.SeekTo(SeekSlider.Value);
-        _isScrubbing = false;
+        ProgressFill.Width = _vm.ProgressFraction * ProgressTrack.ActualWidth;
     }
 
     private void OnArtworkSizeChanged(object sender, SizeChangedEventArgs e)

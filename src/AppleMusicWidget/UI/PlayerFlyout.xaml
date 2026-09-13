@@ -71,24 +71,14 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="{Binding ElapsedText}"
                                Foreground="{DynamicResource TxtSecondary}" FontSize="10" VerticalAlignment="Center" />
-                    <Slider x:Name="SeekSlider" Grid.Column="1"
-                            Minimum="0" Maximum="1" Value="0"
-                            IsMoveToPointEnabled="True"
-                            IsEnabled="{Binding CanSeek}"
-                            VerticalAlignment="Center" Margin="6,0" Height="16"
-                            PreviewMouseLeftButtonDown="OnSeekDown"
-                            PreviewMouseLeftButtonUp="OnSeekUp">
-                        <Slider.Style>
-                            <Style TargetType="Slider">
-                                <!-- Disabled = read-only progress bar; keep it looking normal. -->
-                                <Style.Triggers>
-                                    <Trigger Property="IsEnabled" Value="False">
-                                        <Setter Property="Opacity" Value="1" />
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Slider.Style>
-                    </Slider>
+                    <!-- Apple Music reports IsPlaybackPositionEnabled=false: a passive
+                         2px progress line (same look as the strip), not a slider. -->
+                    <Grid Grid.Column="1" x:Name="ProgressTrack" VerticalAlignment="Center"
+                          Height="16" Margin="6,0">
+                        <Rectangle Height="2" Fill="#20808080" VerticalAlignment="Center" />
+                        <Rectangle x:Name="ProgressFill" Height="2" Fill="{DynamicResource AccentBrush}"
+                                   HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" />
+                    </Grid>
                     <TextBlock Grid.Column="2" Text="{Binding RemainingText}"
                                Foreground="{DynamicResource TxtSecondary}" FontSize="10" VerticalAlignment="Center" />
                 </Grid>
