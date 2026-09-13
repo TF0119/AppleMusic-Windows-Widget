@@ -21,6 +21,7 @@ namespace AppleMusicWidget.UI;
 public partial class TaskbarStrip : Window
 {
     private const int WidthDip = 340;
+    private const int CompactWidthDip = 136;
 
     private readonly PlayerViewModel _vm;
     private readonly TaskbarService _taskbar;
@@ -31,6 +32,7 @@ public partial class TaskbarStrip : Window
     private TaskbarService.TaskbarGeometry _geo;
     private bool _fullscreen;
     private bool _collides;
+    private bool _compact;
     private readonly DispatcherTimer _occlusionWatch = new() { Interval = TimeSpan.FromSeconds(1) };
 
     public TaskbarStrip(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings)
@@ -80,22 +82,45 @@ public partial class TaskbarStrip : Window
         if (_hwnd == IntPtr.Zero || !_geo.IsVisible) return;
         var scale = _geo.Dpi;
         var hPx = (int)Math.Round(_geo.TaskbarRect.Height);
-        var wPx = (int)Math.Round(WidthDip * scale);
-        var x = (int)Math.Round(_geo.TrayRect.Left) - _settings.TaskbarGapPx - wPx;
-        var y = (int)Math.Round(_geo.TaskbarRect.Top);
-        _collides = x < _geo.AppAreaRect.Right + 8;
-        if (_collides)
+        var right = (int)Math.Round(_geo.TrayRect.Left) - _settings.TaskbarGapPx;
+
+        int widthDip = WidthDip;
+        if (_geo.AppAreaRect.Width > 0)
         {
-            Debug.WriteLine($"[TaskbarStrip] collision with app area (need x={x}, apps end {_geo.AppAreaRect.Right}); hidden until Phase 6 compact mode");
+            var avail = right - ((int)Math.Round(_geo.AppAreaRect.Right) + 8);
+            if (avail >= (int)Math.Round(WidthDip * scale)) widthDip = WidthDip;
+            else if (avail >= (int)Math.Round(CompactWidthDip * scale)) widthDip = CompactWidthDip;
+            else widthDip = 0;
+        }
+        if (widthDip == 0)
+        {
+            _collides = true;
+            Debug.WriteLine($"[TaskbarStrip] collision with app area (apps end {_geo.AppAreaRect.Right}); hidden");
             ApplyVisibility();
             return;
         }
+        _collides = false;
+        SetCompactMode(widthDip == CompactWidthDip);
+
+        var wPx = (int)Math.Round(widthDip * scale);
+        var x = right - wPx;
+        var y = (int)Math.Round(_geo.TaskbarRect.Top);
         Height = _geo.TaskbarRect.Height / scale;
-        Width = WidthDip;
+        Width = widthDip;
         // HWND_TOPMOST on every reposition: a recreated taskbar (Explorer restart)
         // can land above us in the topmost band.
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, wPx, hPx,
             Native.SWP_NOACTIVATE);
+    }
+
+    private void SetCompactMode(bool compact)
+    {
+        if (_compact == compact) return;
+        _compact = compact;
+        ArtworkColumn.Width = compact ? new GridLength(0) : new GridLength(32);
+        TrackGapColumn.Width = compact ? new GridLength(0) : new GridLength(10);
+        TrackTextColumn.Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        TrackHoverBorder.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // Shell flyouts promote the taskbar to a higher z-band; while occluded, keep re-asserting.

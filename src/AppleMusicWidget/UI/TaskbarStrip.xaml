@@ -49,9 +49,9 @@
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="8" />
-                <ColumnDefinition Width="32" />
-                <ColumnDefinition Width="10" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="ArtworkColumn" Width="32" />
+                <ColumnDefinition x:Name="TrackGapColumn" Width="10" />
+                <ColumnDefinition x:Name="TrackTextColumn" Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="8" />
             </Grid.ColumnDefinitions>
