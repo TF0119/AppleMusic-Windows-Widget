@@ -7,6 +7,8 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using AppleMusicWidget.Models;
 using AppleMusicWidget.Services;
+using Microsoft.Win32;
+using Color = System.Windows.Media.Color;
 
 namespace AppleMusicWidget.UI;
 
@@ -37,6 +39,9 @@ public partial class PlayerFlyout : Window
         _taskbar = taskbar;
         _settings = settings;
         DataContext = vm;
+
+        ApplyTheme();
+        SystemEvents.UserPreferenceChanged += (_, _) => Dispatcher.InvokeAsync(ApplyTheme);
 
         // Any foreground change while open = the user clicked outside (neither the
         // flyout nor the strip can take focus), so fold. Reposition while open.
@@ -94,6 +99,22 @@ public partial class PlayerFlyout : Window
             Native.SWP_NOACTIVATE);
     }
 
+    // ---------- theme (follows SystemUsesLightTheme, same as TaskbarStrip) ----------
+
+    private void ApplyTheme()
+    {
+        bool light = Theme.SystemUsesLightTheme;
+        Set("FlyoutBg", light ? Color.FromArgb(0xF9, 0xF9, 0xF9, 0xF9) : Color.FromArgb(0xF2, 0x2B, 0x2B, 0x2B));
+        Set("FlyoutBorder", light ? Color.FromArgb(0x1A, 0x00, 0x00, 0x00) : Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+        Set("TxtPrimary", light ? Color.FromArgb(0xE4, 0x00, 0x00, 0x00) : Colors.White);
+        Set("TxtSecondary", light ? Color.FromArgb(0x9B, 0x00, 0x00, 0x00) : Color.FromArgb(0xC5, 0xFF, 0xFF, 0xFF));
+        Set("TxtDisabled", light ? Color.FromArgb(0x66, 0x00, 0x00, 0x00) : Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF));
+        Set("BtnHover", light ? Color.FromArgb(0x0A, 0x00, 0x00, 0x00) : Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        Set("BtnPressed", light ? Color.FromArgb(0x14, 0x00, 0x00, 0x00) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+    }
+
+    private void Set(string key, Color c) => Resources[key] = new SolidColorBrush(c);
+
     // ---------- seek slider / artwork clip ----------
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -116,6 +137,24 @@ public partial class PlayerFlyout : Window
         if (ArtworkImage.ActualWidth <= 0 || ArtworkImage.ActualHeight <= 0) return;
         ArtworkImage.Clip = new RectangleGeometry(
             new Rect(0, 0, ArtworkImage.ActualWidth, ArtworkImage.ActualHeight), 8, 8);
+    }
+
+    private static class Theme
+    {
+        public static bool SystemUsesLightTheme
+        {
+            get
+            {
+                try
+                {
+                    var v = Registry.GetValue(
+                        @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                        "SystemUsesLightTheme", 1);
+                    return v is int i ? i != 0 : true;
+                }
+                catch { return true; }
+            }
+        }
     }
 
     private static class Native
