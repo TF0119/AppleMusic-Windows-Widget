@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls.Primitives;
@@ -28,16 +29,20 @@ public partial class PlayerFlyout : Window
     private readonly PlayerViewModel _vm;
     private readonly TaskbarService _taskbar;
     private readonly WidgetSettings _settings;
+    private readonly Window _strip; // anchor: clicks inside it must not count as "outside"
 
     private IntPtr _hwnd;
     private bool _isScrubbing;
+    private Native.HookProc? _mouseProc; // field: must outlive the hook
+    private IntPtr _mouseHook;
 
-    public PlayerFlyout(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings)
+    public PlayerFlyout(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings, Window strip)
     {
         InitializeComponent();
         _vm = vm;
         _taskbar = taskbar;
         _settings = settings;
+        _strip = strip;
         DataContext = vm;
 
         ApplyTheme();
@@ -45,8 +50,15 @@ public partial class PlayerFlyout : Window
 
         // Any foreground change while open = the user clicked outside (neither the
         // flyout nor the strip can take focus), so fold. Reposition while open.
+        // Kept as a backstop: EVENT_SYSTEM_FOREGROUND does not fire when the click
+        // lands inside the already-active window — the mouse hook below covers that.
         _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(() => { if (IsVisible) Hide(); });
         _taskbar.Changed += _ => Dispatcher.InvokeAsync(() => { if (IsVisible) Reposition(); });
+
+        // Low-level mouse hook only while visible: catches outside clicks that
+        // produce no foreground change (clicking the already-focused window).
+        IsVisibleChanged += (_, _) => { if (IsVisible) InstallMouseHook(); else RemoveMouseHook(); };
+        Closed += (_, _) => RemoveMouseHook();
 
         _vm.PropertyChanged += OnVmPropertyChanged;
         Loaded += (_, _) =>
@@ -98,6 +110,49 @@ public partial class PlayerFlyout : Window
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, wPx, hPx,
             Native.SWP_NOACTIVATE);
     }
+
+    // ---------- outside-click mouse hook (installed only while visible) ----------
+
+    private void InstallMouseHook()
+    {
+        if (_mouseHook != IntPtr.Zero) return;
+        _mouseProc ??= OnMouseHook;
+        _mouseHook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, _mouseProc, IntPtr.Zero, 0);
+        if (_mouseHook == IntPtr.Zero)
+            Log($"SetWindowsHookEx failed: {Marshal.GetLastWin32Error()}");
+    }
+
+    private void RemoveMouseHook()
+    {
+        if (_mouseHook == IntPtr.Zero) return;
+        Native.UnhookWindowsHookEx(_mouseHook);
+        _mouseHook = IntPtr.Zero;
+    }
+
+    private IntPtr OnMouseHook(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && IsButtonDown(wParam))
+        {
+            // MSLLHOOKSTRUCT begins with pt (screen coords).
+            var pt = Marshal.PtrToStructure<Native.POINT>(lParam);
+            if (!Contains(_hwnd, pt) && !Contains(StripHwnd(), pt))
+                Dispatcher.BeginInvoke(new Action(Hide)); // keep the hook callback fast
+        }
+        return Native.CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+    }
+
+    private static bool IsButtonDown(IntPtr wParam) => (int)wParam is
+        Native.WM_LBUTTONDOWN or Native.WM_RBUTTONDOWN or Native.WM_MBUTTONDOWN or
+        Native.WM_NCLBUTTONDOWN or Native.WM_NCRBUTTONDOWN or Native.WM_NCMBUTTONDOWN;
+
+    private IntPtr StripHwnd() => new WindowInteropHelper(_strip).Handle;
+
+    private static bool Contains(IntPtr hwnd, Native.POINT pt) =>
+        hwnd != IntPtr.Zero
+        && Native.GetWindowRect(hwnd, out var r)
+        && pt.X >= r.Left && pt.X < r.Right && pt.Y >= r.Top && pt.Y < r.Bottom;
+
+    private static void Log(string msg) => Debug.WriteLine($"[PlayerFlyout] {msg}");
 
     // ---------- theme (follows SystemUsesLightTheme, same as TaskbarStrip) ----------
 
@@ -163,7 +218,16 @@ public partial class PlayerFlyout : Window
         public const long WS_EX_TOOLWINDOW = 0x00000080;
         public const long WS_EX_NOACTIVATE = 0x08000000;
         public const uint SWP_NOACTIVATE = 0x0010;
+        public const int WH_MOUSE_LL = 14;
+        public const int WM_LBUTTONDOWN = 0x0201;
+        public const int WM_RBUTTONDOWN = 0x0204;
+        public const int WM_MBUTTONDOWN = 0x0207;
+        public const int WM_NCLBUTTONDOWN = 0x00A1;
+        public const int WM_NCRBUTTONDOWN = 0x00A4;
+        public const int WM_NCMBUTTONDOWN = 0x00A7;
         public static readonly IntPtr HWND_TOPMOST = new(-1);
+
+        public delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
@@ -171,5 +235,19 @@ public partial class PlayerFlyout : Window
         public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
         [DllImport("user32.dll")]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+        [DllImport("user32.dll")]
+        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll")]
+        public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X, Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int Left, Top, Right, Bottom; }
     }
 }
