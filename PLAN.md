@@ -965,6 +965,12 @@ UI完成前にパフォーマンスを固める。
 
 UI Automationは必要な場合のみ追加する。
 
+### 完了メモ（2026-09-13）
+
+- `…` メニュー: `AutomationId="ActionButton"` を `InvokePattern.Invoke()` で呼び出し、実機でメニュー表示を確認。
+- 再生待ちリスト: `AutomationId="PlayQueueToggleButton"` を `TogglePattern.Toggle()` で呼び出し、`PlayQueueListView` の表示を確認。
+- UIA はボタン押下時のみ使用し、常駐する UIA 監視は追加しない。
+
 ---
 
 ## Phase 6 — Windows統合

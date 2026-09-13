@@ -125,11 +125,11 @@
 
             <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
                         Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-                <Button Style="{StaticResource FlatButton}" Content="&#xE712;" IsEnabled="False" ToolTip="Phase 5" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE712;" Command="{Binding ActionMenuCommand}" ToolTip="その他の操作" />
                 <Button Style="{StaticResource FlatButton}" Content="&#xE892;" Command="{Binding PreviousCommand}" />
                 <Button Style="{StaticResource PlayPauseButton}" Command="{Binding PlayPauseCommand}" />
                 <Button Style="{StaticResource FlatButton}" Content="&#xE893;" Command="{Binding NextCommand}" />
-                <Button Style="{StaticResource FlatButton}" Content="&#xE8FD;" IsEnabled="False" ToolTip="Phase 5" />
+                <Button Style="{StaticResource FlatButton}" Content="&#xE90B;" Command="{Binding PlayQueueCommand}" ToolTip="再生待ちリスト" />
             </StackPanel>
         </Grid>
     </Border>

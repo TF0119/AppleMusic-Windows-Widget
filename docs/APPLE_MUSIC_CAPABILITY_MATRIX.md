@@ -25,8 +25,8 @@
 | Track change latency           | Yes       | `MediaPropertiesChanged` → widget title+artwork updated in ~360 ms after `TrySkipNextAsync` (Phase 2) |
 | Minimized / other v-desktop    | Assumed   | Session is process-global, not window-bound; expected to persist (confirm in Phase 7) |
 | Launched-but-never-played      | Yes       | Session exists with `PlaybackStatus=Opened`, empty props, zeroed timeline → show idle UI |
-| `…` menu                       | Untested  | Not exposed via GSMTC → UI Automation (Phase 5) |
-| Play Next queue                | Untested  | Not exposed via GSMTC → UI Automation (Phase 5) |
+| `…` menu                       | Yes       | Not exposed via GSMTC → UI Automation on user action only: `AutomationId="ActionButton"` + `InvokePattern.Invoke()` opens the menu (Phase 5) |
+| Play Next queue                | Yes       | Not exposed via GSMTC → UI Automation on user action only: `AutomationId="PlayQueueToggleButton"` + `TogglePattern.Toggle()` shows `PlayQueueListView` (Phase 5) |
 
 ## Lifecycle behavior (observed)
 
@@ -68,5 +68,4 @@ Remaining ideas if needed later: drop `ThemeMode="System"` (strip uses its own b
 ## Open questions for later phases
 
 - Whether `Artist` field separator is consistently ` — ` (em-dash) vs ` • ` — observed both; treat `Artist` string as display-ready "artist — album" line rather than parsing.
-- `…` menu / queue invocation via UI Automation (Phase 5).
 - Behavior during sleep/resume and session re-creation after Apple Music update (Phase 7).
