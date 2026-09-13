@@ -968,8 +968,8 @@ UI Automationは必要な場合のみ追加する。
 ### 完了メモ（2026-09-13）
 
 - `…` メニュー: `AutomationId="ActionButton"` を `InvokePattern.Invoke()` で呼び出し、実機でメニュー表示を確認。
-- 再生待ちリスト: `AutomationId="PlayQueueToggleButton"` を `TogglePattern.Toggle()` で呼び出し、`PlayQueueListView` の表示を確認。
-- UIA はボタン押下時のみ使用し、常駐する UIA 監視は追加しない。
+- 再生待ちリスト: `PlayQueueListView` を `ItemContainerPattern` で読み取り、曲名・アーティスト / アルバム・時間をウィジェット内の読み取り専用画面に表示。取得のため一時的に開いた Apple Music 側のキューは元の状態へ戻す。
+- UIA はボタン押下時のみ使用し、常駐する UIA 監視は追加しない。Apple Music を前面化せず、UIA 操作で前景が移った場合も直前のウィンドウへ即時復帰する。
 
 ---
 

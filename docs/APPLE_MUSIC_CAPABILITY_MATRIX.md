@@ -26,7 +26,7 @@
 | Minimized / other v-desktop    | Assumed   | Session is process-global, not window-bound; expected to persist (confirm in Phase 7) |
 | Launched-but-never-played      | Yes       | Session exists with `PlaybackStatus=Opened`, empty props, zeroed timeline → show idle UI |
 | `…` menu                       | Yes       | Not exposed via GSMTC → UI Automation on user action only: `AutomationId="ActionButton"` + `InvokePattern.Invoke()` opens the menu (Phase 5) |
-| Play Next queue                | Yes       | Not exposed via GSMTC → UI Automation on user action only: `AutomationId="PlayQueueToggleButton"` + `TogglePattern.Toggle()` shows `PlayQueueListView` (Phase 5) |
+| Play Next queue                | Yes       | Not exposed via GSMTC → on user action, temporarily toggle `PlayQueueToggleButton`, enumerate `PlayQueueListView` through `ItemContainerPattern`, and render title / artist-album / duration in the widget. The Apple Music queue state and previous foreground window are restored after reading (Phase 5) |
 
 ## Lifecycle behavior (observed)
 

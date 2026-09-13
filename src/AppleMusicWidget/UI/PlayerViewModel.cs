@@ -41,7 +41,6 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
         PreviousCommand = new RelayCommand(() => _provider.PreviousAsync(), () => CanPrevious);
         NextCommand = new RelayCommand(() => _provider.NextAsync(), () => CanNext);
         ActionMenuCommand = new RelayCommand(AppleMusicUiAutomation.ShowActionMenuAsync);
-        PlayQueueCommand = new RelayCommand(AppleMusicUiAutomation.TogglePlayQueueAsync);
 
         _provider.TrackChanged += t => _dispatcher.InvokeAsync(() => OnTrackChanged(t));
         // Marshal first: LoadArtworkAsync captures _artworkSeq/_track.Key, which
@@ -82,7 +81,6 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
     public RelayCommand PreviousCommand { get; }
     public RelayCommand NextCommand { get; }
     public RelayCommand ActionMenuCommand { get; }
-    public RelayCommand PlayQueueCommand { get; }
 
     public void SeekTo(double fraction)
     {

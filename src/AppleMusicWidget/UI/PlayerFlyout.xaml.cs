@@ -22,6 +22,7 @@ public partial class PlayerFlyout : Window
 {
     private const int WidthDip = 350;
     private const int HeightDip = 150;
+    private const int QueueHeightDip = 360;
     private const int GapAboveTaskbarPx = 8; // physical px between flyout bottom and taskbar top
 
     private readonly PlayerViewModel _vm;
@@ -32,6 +33,9 @@ public partial class PlayerFlyout : Window
     private IntPtr _hwnd;
     private Native.HookProc? _mouseProc; // field: must outlive the hook
     private IntPtr _mouseHook;
+    private bool _queueVisible;
+    private bool _queueLoading;
+    private bool _suppressForegroundClose;
 
     /// <summary>Set by the owner; invoked when the track info area is clicked.</summary>
     public Action? OpenAppleMusicRequested { get; set; }
@@ -52,12 +56,12 @@ public partial class PlayerFlyout : Window
         // flyout nor the strip can take focus), so fold. Reposition while open.
         // Kept as a backstop: EVENT_SYSTEM_FOREGROUND does not fire when the click
         // lands inside the already-active window — the mouse hook below covers that.
-        _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(() => { if (IsVisible) Hide(); });
+        _taskbar.ForegroundChanged += () => Dispatcher.InvokeAsync(() => { if (IsVisible && !_suppressForegroundClose) Hide(); });
         _taskbar.Changed += _ => Dispatcher.InvokeAsync(() => { if (IsVisible) Reposition(); });
 
         // Low-level mouse hook only while visible: catches outside clicks that
         // produce no foreground change (clicking the already-focused window).
-        IsVisibleChanged += (_, _) => { if (IsVisible) InstallMouseHook(); else RemoveMouseHook(); };
+        IsVisibleChanged += (_, _) => { if (IsVisible) InstallMouseHook(); else { RemoveMouseHook(); ShowPlayerView(); } };
         Closed += (_, _) => RemoveMouseHook();
 
         _vm.PropertyChanged += OnVmPropertyChanged;
@@ -68,6 +72,7 @@ public partial class PlayerFlyout : Window
     public void Toggle()
     {
         if (IsVisible) { Hide(); return; }
+        ShowPlayerView();
         Show();
         Reposition();
     }
@@ -105,7 +110,7 @@ public partial class PlayerFlyout : Window
         if (_taskbar.Current is not { IsVisible: true } g) return;
         var scale = g.Dpi;
         var wPx = (int)Math.Round(WidthDip * scale);
-        var hPx = (int)Math.Round(HeightDip * scale);
+        var hPx = (int)Math.Round((_queueVisible ? QueueHeightDip : HeightDip) * scale);
         // Right edge = strip's right edge (tray left - gap); bottom sits above the taskbar.
         var x = (int)Math.Round(g.TrayRect.Left) - _settings.TaskbarGapPx - wPx;
         var y = (int)Math.Round(g.TaskbarRect.Top) - GapAboveTaskbarPx - hPx;
@@ -187,6 +192,62 @@ public partial class PlayerFlyout : Window
     private void UpdateProgress()
     {
         ProgressFill.Width = _vm.ProgressFraction * ProgressTrack.ActualWidth;
+    }
+
+    private async void OnPlayQueueClick(object sender, RoutedEventArgs e) => await ShowQueueAsync();
+    private async void OnQueueRefreshClick(object sender, RoutedEventArgs e) => await LoadQueueAsync();
+    private void OnQueueBackClick(object sender, RoutedEventArgs e) => ShowPlayerView();
+
+    private async Task ShowQueueAsync()
+    {
+        _queueVisible = true;
+        PlayerView.Visibility = Visibility.Collapsed;
+        QueueView.Visibility = Visibility.Visible;
+        Height = QueueHeightDip;
+        Reposition();
+        await LoadQueueAsync();
+    }
+
+    private void ShowPlayerView()
+    {
+        _queueVisible = false;
+        PlayerView.Visibility = Visibility.Visible;
+        QueueView.Visibility = Visibility.Collapsed;
+        Height = HeightDip;
+        QueueItems.ItemsSource = null;
+        QueueStatus.Text = "";
+        Reposition();
+    }
+
+    private async Task LoadQueueAsync()
+    {
+        if (_queueLoading) return;
+        _queueLoading = true;
+        _suppressForegroundClose = true;
+        QueueRefreshButton.IsEnabled = false;
+        QueueItems.ItemsSource = null;
+        QueueStatus.Text = "読み込み中…";
+        try
+        {
+            var result = await AppleMusicUiAutomation.ReadPlayQueueAsync();
+            if (!_queueVisible || !IsVisible) return;
+            if (result is null)
+                QueueStatus.Text = "再生待ちリストを取得できませんでした";
+            else if (result.Count == 0)
+                QueueStatus.Text = "再生待ちの曲はありません";
+            else
+            {
+                QueueItems.ItemsSource = result;
+                QueueStatus.Text = $"{result.Count} 曲";
+            }
+        }
+        finally
+        {
+            QueueRefreshButton.IsEnabled = true;
+            await Task.Delay(100);
+            _suppressForegroundClose = false;
+            _queueLoading = false;
+        }
     }
 
     private void OnTrackClick(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
