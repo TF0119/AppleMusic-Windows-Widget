@@ -66,11 +66,13 @@
             <!-- Track info: hover pill like the transport buttons; click brings
                  Apple Music to the foreground (PLAN: Apple Musicへの導線). -->
             <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3" CornerRadius="4"
-                    Margin="-6,-4,-6,0" Padding="6,4" Background="Transparent"
+                    Margin="-6,-4,-6,0" Padding="6,4"
                     Cursor="Hand" MouseLeftButtonDown="OnTrackClick"
                     ToolTip="Apple Music を開く">
                 <Border.Style>
                     <Style TargetType="Border">
+                        <!-- setter, not a local value: local values outrank triggers -->
+                        <Setter Property="Background" Value="Transparent" />
                         <Style.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource TrackHover}" />
@@ -85,7 +87,7 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Grid Width="64" Height="64" VerticalAlignment="Top">
+                    <Grid Width="64" Height="64" VerticalAlignment="Top" IsHitTestVisible="False">
                         <Border CornerRadius="8" Background="#20808080" />
                         <Image x:Name="ArtworkImage" Source="{Binding Artwork}"
                                Stretch="UniformToFill" SizeChanged="OnArtworkSizeChanged" />
