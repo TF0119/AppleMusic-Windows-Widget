@@ -186,7 +186,10 @@ public partial class TaskbarStrip : Window
     // reaches Root -> toggle the flyout.
     private void OnBodyClick(object sender, MouseButtonEventArgs e)
     {
-        _flyout ??= new PlayerFlyout(_vm, _taskbar, _settings, this);
+        _flyout ??= new PlayerFlyout(_vm, _taskbar, _settings, this)
+        {
+            OpenAppleMusicRequested = AppleMusicActivator.BringToFront,
+        };
         _flyout.Toggle();
     }
 

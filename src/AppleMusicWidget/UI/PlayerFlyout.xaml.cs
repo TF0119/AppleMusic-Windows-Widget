@@ -33,6 +33,9 @@ public partial class PlayerFlyout : Window
     private Native.HookProc? _mouseProc; // field: must outlive the hook
     private IntPtr _mouseHook;
 
+    /// <summary>Set by the owner; invoked when the track info area is clicked.</summary>
+    public Action? OpenAppleMusicRequested { get; set; }
+
     public PlayerFlyout(PlayerViewModel vm, TaskbarService taskbar, WidgetSettings settings, Window strip)
     {
         InitializeComponent();
@@ -183,6 +186,9 @@ public partial class PlayerFlyout : Window
     {
         ProgressFill.Width = _vm.ProgressFraction * ProgressTrack.ActualWidth;
     }
+
+    private void OnTrackClick(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
+        OpenAppleMusicRequested?.Invoke();
 
     private void OnArtworkSizeChanged(object sender, SizeChangedEventArgs e)
     {
