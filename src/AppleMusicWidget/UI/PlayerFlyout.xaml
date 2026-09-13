@@ -150,7 +150,7 @@
                     </Grid.ColumnDefinitions>
                     <Button Style="{StaticResource FlatButton}" Content="&#xE72B;"
                             Click="OnQueueBackClick" ToolTip="戻る" />
-                    <TextBlock Grid.Column="1" Text="再生待ちリスト" FontSize="14" FontWeight="SemiBold"
+                    <TextBlock Grid.Column="1" Text="再生キュー" FontSize="14" FontWeight="SemiBold"
                                Foreground="{DynamicResource TxtPrimary}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                     <Button Grid.Column="2" x:Name="QueueRefreshButton" Style="{StaticResource FlatButton}" Content="&#xE72C;"
@@ -162,6 +162,9 @@
                          ScrollViewer.CanContentScroll="True"
                          VirtualizingPanel.IsVirtualizing="True"
                          VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.ScrollUnit="Pixel"
+                         ScrollViewer.PanningMode="VerticalOnly"
+                         SelectionChanged="OnQueueSelectionChanged"
                          Margin="0,4,0,4"
                          Background="Transparent"
                          BorderThickness="0">
@@ -171,17 +174,11 @@
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Padding" Value="0" />
-                            <Setter Property="Focusable" Value="False" />
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <ContentPresenter />
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
+                            <Setter Property="IsTabStop" Value="False" />
+                            <Setter Property="Margin" Value="0,1" />
                         </Style>
                     </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
@@ -189,8 +186,53 @@
                             <Grid>
                                 <TextBlock x:Name="HeaderText" Text="{Binding Title, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
                                            Visibility="Collapsed" Foreground="{DynamicResource TxtPrimary}"
-                                           FontSize="12" FontWeight="SemiBold" Margin="8,8,8,4" />
-                                <Border x:Name="TrackRow" Padding="8,6" CornerRadius="4">
+                                           FontSize="14" FontWeight="SemiBold" Margin="8,10,8,6" />
+                                <Border x:Name="CurrentRow" Visibility="Collapsed"
+                                        Background="{DynamicResource CurrentTrackBg}" CornerRadius="6"
+                                        Padding="8" Margin="0,2">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="3" />
+                                            <ColumnDefinition Width="8" />
+                                            <ColumnDefinition Width="40" />
+                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="3" CornerRadius="2"
+                                                Background="{DynamicResource AccentBrush}" />
+                                        <Grid Grid.Column="2" Width="40" Height="40">
+                                            <Border CornerRadius="4" Background="#20808080" />
+                                            <Image Source="{Binding DataContext.Artwork, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
+                                                   Stretch="UniformToFill" />
+                                        </Grid>
+                                        <StackPanel Grid.Column="4" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DataContext.Title, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
+                                                       ToolTip="{Binding DataContext.Title, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
+                                                       Foreground="{DynamicResource TxtPrimary}" FontSize="14" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding DataContext.Subtitle, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
+                                                       ToolTip="{Binding DataContext.Subtitle, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
+                                                       Foreground="{DynamicResource TxtSecondary}" FontSize="12" Margin="0,2,0,0"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="5" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="一時停止" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TxtSecondary}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.IsPlaying, RelativeSource={RelativeSource AncestorType=Window}, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}" Value="True">
+                                                            <Setter Property="Text" Value="再生中" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </Border>
+                                <Border x:Name="TrackRow" Padding="8,7" CornerRadius="4" Margin="0,1">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -202,13 +244,13 @@
                                         </Grid.RowDefinitions>
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Title, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
                                                    ToolTip="{Binding Title, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
-                                                   Foreground="{DynamicResource TxtPrimary}" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TxtPrimary}" FontSize="14" FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Duration, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
-                                                   Foreground="{DynamicResource TxtSecondary}" FontSize="11" Margin="8,0,0,0" />
+                                                   Foreground="{DynamicResource TxtSecondary}" FontSize="12" Margin="8,0,0,0" />
                                         <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding Subtitle, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
                                                    ToolTip="{Binding Subtitle, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}"
-                                                   Foreground="{DynamicResource TxtSecondary}" FontSize="11"
+                                                   Foreground="{DynamicResource TxtSecondary}" FontSize="12"
                                                    TextTrimming="CharacterEllipsis" />
                                     </Grid>
                                 </Border>
@@ -218,12 +260,17 @@
                                     <Setter TargetName="HeaderText" Property="Visibility" Value="Visible" />
                                     <Setter TargetName="TrackRow" Property="Visibility" Value="Collapsed" />
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding IsCurrent, ConverterCulture={x:Static globalization:CultureInfo.InvariantCulture}}" Value="True">
+                                    <Setter TargetName="CurrentRow" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="TrackRow" Property="Visibility" Value="Collapsed" />
+                                    <Setter TargetName="HeaderText" Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
                             </DataTemplate.Triggers>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <TextBlock Grid.Row="2" x:Name="QueueStatus" Foreground="{DynamicResource TxtSecondary}"
-                           FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                           FontSize="12" HorizontalAlignment="Center" Margin="0,4,0,0" />
             </Grid>
         </Grid>
     </Border>

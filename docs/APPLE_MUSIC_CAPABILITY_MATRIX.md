@@ -28,8 +28,8 @@
 | `…` menu                       | Yes       | Not exposed via GSMTC → UI Automation on user action only: `AutomationId="ActionButton"` + `InvokePattern.Invoke()` opens the menu (Phase 5) |
 | Play Next queue                | Yes       | Temporarily open `PlayQueueToggleButton`, enumerate `PlayQueueListView` through `ItemContainerPattern`, and render up to 200 title / artist-album / duration rows with WPF recycling virtualization. Queue state, selected tab, and foreground window are restored after reading (Phase 5) |
 | Play history                   | Yes       | The queue pane exposes two direct-child `ToggleButton` elements without AutomationId. Identify them structurally by horizontal order, read the right-hand History tab from the same `PlayQueueListView`, retain 50 rows, and place them above the Play Next section (Phase 5) |
-| Queue track activation         | **No**    | Queue rows expose `SelectionItemPattern`, `ScrollItemPattern`, and `VirtualizedItemPattern`, but not `InvokePattern`. `SelectionItemPattern.Select()` selected the row without changing the GSMTC track; coordinate clicking was rejected as too fragile |
-| Queue artwork                  | **No**    | Raw UIA contains `AutomationId="StaticArtwork"`, but exposes neither image bytes nor a source URL. Screen-coordinate cropping would fail while minimized or off-screen and is not used |
+| Queue track activation         | **No**    | Native Apple Music uses a real double-click, but queue rows have no HWND or `InvokePattern`. `SelectionItemPattern.Select()` and posted `WM_LBUTTONDBLCLK` to `InputSiteWindowClass` did not change the GSMTC track. The remaining `SendInput` approach would require foregrounding Apple Music and moving the global cursor, which violates the widget's NOACTIVATE contract |
+| Queue artwork                  | **No**    | Raw UIA contains `AutomationId="StaticArtwork"`, but exposes neither image bytes nor a source URL. Screen-coordinate cropping would fail while minimized or off-screen. Only the current track reuses the artwork already supplied by GSMTC |
 
 ## Lifecycle behavior (observed)
 
@@ -78,7 +78,7 @@ Method: `tools/measure-mem.ps1`, `tools/soak.ps1`, real Apple Music playback, an
 | 100 track skips | Private WS 38.6→47.8 MB | Rose during initial artwork/cache loading, then stayed around 45–48 MB |
 | 50 start/stop cycles | Private Bytes 83.4→84.6 MB | No growth trend; waiting-state samples had trimmed Private WS 5.5–9.1 MB |
 | 60 min real playback | Private WS 39.3→39.1 MB, CPU max 0.0488% | Tracks advanced throughout; Private Bytes 73.6→93.2 MB |
-| Large queue and history | 39 data rows, 9 realized rows | 20 upcoming and 17 history tracks rendered through recycling virtualization; 60 wheel operations and two automatic track-change refreshes remained stable for over 16 minutes |
+| Large queue and history | 39 data rows, 9 realized rows | 20 upcoming and 17 history tracks rendered through recycling virtualization; pixel-unit scrolling, Fluent row states, 60 wheel operations, and two automatic track-change refreshes remained stable for over 16 minutes |
 
 The large-list crash was a Fluent `ScrollBar` template binding resolving `en-US` under `InvariantGlobalization`, not an application data binding. Setting inherited `xml:lang=""` on both widget windows makes system templates resolve invariant culture; no new Event 1026/1000 occurred after the fix.
 

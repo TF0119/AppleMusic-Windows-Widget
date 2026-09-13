@@ -969,10 +969,11 @@ UI Automationは必要な場合のみ追加する。
 
 - `…` メニュー: `AutomationId="ActionButton"` を `InvokePattern.Invoke()` で呼び出し、実機でメニュー表示を確認。
 - 再生待ちリスト: `PlayQueueListView` を `ItemContainerPattern` で読み取り、曲名・アーティスト / アルバム・時間をウィジェット内の読み取り専用画面に表示。`PaneRoot` 直下の 2 つの `ToggleButton` を構造と位置で識別し、「次に再生」と「履歴」を取得する。
-- 表示: 初期位置は「次に再生」とし、上へスクロールすると直近 50 曲までの実履歴を表示する。最大 200 曲のキューを取得し、WPF の Recycling virtualization により表示中の行だけを生成する。
+- 表示: 履歴、現在曲、次に再生を一続きに並べ、現在曲を初期スクロール位置にする。現在曲は既存 Artwork、システムアクセントのインジケーター、再生状態で強調し、上へスクロールすると直近 50 曲までの実履歴を表示する。
+- Fluent: `ThemeMode="System"` の標準 `ListBoxItem` テンプレートを使い、Windows のホバー / 押下状態、Segoe UI Variable の 14 / 12 epx タイプランプ、システムアクセント、ライト / ダーク追従を維持する。最大 200 曲のキューは Recycling virtualization とピクセル単位スクロールで描画する。
 - 更新: キュー表示中に GSMTC の曲変更を検出すると、300 ms のデバウンス後に自動再取得する。手動更新も残す。
 - 状態復元: 取得のため一時的に開いた Apple Music 側のキュー、選択中の「次に再生」/「履歴」タブ、前景ウィンドウを元の状態へ戻す。UIA は取得時だけ使用し、常駐監視しない。
-- 非対応: キューの `SelectionItemPattern.Select()` は行を選択するだけで再生曲を変更しないため、曲クリックによる移動は実装しない。`StaticArtwork` は画像データや URL を公開しないため、キューの Artwork も表示しない。
+- 非対応: キュー行の `SelectionItemPattern.Select()` と `InputSiteWindowClass` への `WM_LBUTTONDBLCLK` は再生曲を変更しない。残る手段である実マウス入力の注入は前景とカーソルを奪い、NOACTIVATE の要件に反するため採用しない。`StaticArtwork` は画像データや URL を公開しないため、現在曲以外の Artwork も表示しない。
 
 ---
 

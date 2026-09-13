@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using AppleMusicWidget.Models;
 using AppleMusicWidget.Services;
 using Microsoft.Win32;
@@ -179,6 +180,8 @@ public partial class PlayerFlyout : Window
         Set("BtnPressed", light ? Color.FromArgb(0x14, 0x00, 0x00, 0x00) : Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
         // Match the shell's hover: a clearly visible lightening, not a dark tint.
         Set("TrackHover", light ? Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+        var accent = SystemParameters.WindowGlassColor;
+        Set("CurrentTrackBg", Color.FromArgb(light ? (byte)0x24 : (byte)0x38, accent.R, accent.G, accent.B));
         Resources["AccentBrush"] = SystemParameters.WindowGlassBrush;
     }
 
@@ -213,6 +216,11 @@ public partial class PlayerFlyout : Window
     private async void OnPlayQueueClick(object sender, RoutedEventArgs e) => await ShowQueueAsync();
     private async void OnQueueRefreshClick(object sender, RoutedEventArgs e) => await LoadQueueAsync();
     private void OnQueueBackClick(object sender, RoutedEventArgs e) => ShowPlayerView();
+
+    private void OnQueueSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (QueueItems.SelectedItem is not null) QueueItems.SelectedItem = null;
+    }
 
     private async Task ShowQueueAsync()
     {
@@ -261,13 +269,24 @@ public partial class PlayerFlyout : Window
                     rows.Add(new PlayQueueItem("履歴", "", "", true));
                     for (var i = result.History.Count - 1; i >= 0; i--) rows.Add(result.History[i]);
                 }
-                var upcomingIndex = rows.Count;
-                rows.Add(new PlayQueueItem("次に再生", "", "", true));
+                var nextHeader = new PlayQueueItem("次に再生", "", "", true);
+                PlayQueueItem anchor;
+                if (!_vm.IsIdle)
+                {
+                    anchor = new PlayQueueItem("", "", "", IsCurrent: true);
+                    rows.Add(anchor);
+                }
+                else
+                {
+                    anchor = nextHeader;
+                }
+                rows.Add(nextHeader);
                 rows.AddRange(result.Upcoming);
                 QueueItems.ItemsSource = rows;
-                QueueStatus.Text = $"次に再生 {result.Upcoming.Count} 曲 / 履歴 {result.History.Count} 曲";
-                QueueItems.UpdateLayout();
-                FindVisualChild<ScrollViewer>(QueueItems)?.ScrollToVerticalOffset(upcomingIndex);
+                QueueStatus.Text = result.History.Count > 0
+                    ? $"上へスクロールで履歴 {result.History.Count} 曲　　次に再生 {result.Upcoming.Count} 曲"
+                    : $"次に再生 {result.Upcoming.Count} 曲";
+                _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
             }
         }
         finally
@@ -280,6 +299,17 @@ public partial class PlayerFlyout : Window
             _queueReloadPending = false;
             if (reload) _ = LoadQueueAsync();
         }
+    }
+
+    private void ScrollItemToTop(object item)
+    {
+        if (!_queueVisible || !IsVisible) return;
+        QueueItems.ScrollIntoView(item);
+        QueueItems.UpdateLayout();
+        var scroll = FindVisualChild<ScrollViewer>(QueueItems);
+        if (scroll is null || QueueItems.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem container) return;
+        var y = container.TransformToAncestor(scroll).Transform(new Point()).Y;
+        scroll.ScrollToVerticalOffset(scroll.VerticalOffset + y);
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
