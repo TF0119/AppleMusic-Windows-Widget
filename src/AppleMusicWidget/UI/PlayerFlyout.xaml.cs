@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -32,6 +34,25 @@ public partial class PlayerFlyout : Window
 
     private sealed record QueueViewportBookmark(PlayQueueItem Item, int Occurrence, double Y);
 
+    private sealed class QueueRowCollection : ObservableCollection<PlayQueueItem>
+    {
+        public void Reset(IEnumerable<PlayQueueItem> items)
+        {
+            Items.Clear();
+            foreach (var item in items) Items.Add(item);
+            OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+            OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
+    }
+
+    private sealed record QueueAdvance(
+        PlayQueueSnapshot Snapshot,
+        PlayQueueItem? HistoryItem,
+        int ConsumedUpcoming,
+        bool UpcomingUnknown,
+        bool RecoveredUpcoming);
+
     private readonly PlayerViewModel _vm;
     private readonly TaskbarService _taskbar;
     private readonly WidgetSettings _settings;
@@ -46,8 +67,12 @@ public partial class PlayerFlyout : Window
     private int _queueRefreshVersion;
     private bool _queueReloadPending;
     private static readonly TimeSpan QueueRecoverySettleDelay = TimeSpan.FromMilliseconds(700);
+    private static readonly TimeSpan QueueMetadataSettleDelay = TimeSpan.FromMilliseconds(400);
+    private long _deferredQueueTrackVersion;
     private PlayQueueSnapshot? _queueCache;
     private bool _queueCacheDirty = true;
+    private bool _queueUpcomingUnknown;
+    private readonly QueueRowCollection _queueRows = [];
     private string _observedTrackTitle = "";
     private string _observedTrackSubtitle = "";
     private TimeSpan _observedTrackDuration;
@@ -70,6 +95,7 @@ public partial class PlayerFlyout : Window
         _settings = settings;
         _strip = strip;
         DataContext = vm;
+        QueueItems.ItemsSource = _queueRows;
         _observedTrackTitle = _vm.Title;
         _observedTrackSubtitle = _vm.Subtitle;
         _observedTrackDuration = _vm.Duration;
@@ -215,52 +241,174 @@ public partial class PlayerFlyout : Window
     {
         if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
             UpdateProgress();
-        if (e.PropertyName == nameof(PlayerViewModel.Duration))
+        if (e.PropertyName == nameof(PlayerViewModel.Duration) && _deferredQueueTrackVersion == 0)
             _observedTrackDuration = _vm.Duration;
         if (e.PropertyName == nameof(PlayerViewModel.IsIdle))
             _observedTrackIdle = _vm.IsIdle;
         if (e.PropertyName == nameof(PlayerViewModel.TrackVersion))
         {
-            var prevTitle = _observedTrackTitle;
-            var prevSubtitle = _observedTrackSubtitle;
-            var prevDuration = _observedTrackDuration;
-            var prevIdle = _observedTrackIdle;
-            _observedTrackTitle = _vm.Title;
-            _observedTrackSubtitle = _vm.Subtitle;
-            _observedTrackDuration = _vm.Duration;
-            _observedTrackIdle = _vm.IsIdle;
-            _queueRefreshVersion++;
-            if (_vm.IsIdle)
+            if (!_vm.IsIdle && string.IsNullOrWhiteSpace(_vm.Subtitle))
             {
-                _queueCache = null;
-                _queueCacheDirty = true;
+                var version = _deferredQueueTrackVersion = _vm.TrackVersion;
+                _ = ProcessDeferredTrackChangeAsync(version);
                 return;
             }
-            if (_queueCache is null)
-            {
-                if (_queueLoading) _queueReloadPending = true;
-                return;
-            }
-            _queueCache = EstimateAdvancedCache(_queueCache, prevTitle, prevSubtitle, prevDuration, prevIdle, _vm.Title);
-            _queueCacheDirty = true;
-            if (_queueVisible && IsVisible)
-                ApplyQueueSnapshot(_queueCache, preserveViewport: true);
+            _deferredQueueTrackVersion = 0;
+            ProcessObservedTrackChange();
         }
     }
 
-    private static PlayQueueSnapshot EstimateAdvancedCache(
-        PlayQueueSnapshot cache, string prevTitle, string prevSubtitle, TimeSpan prevDuration, bool prevIdle, string newTitle)
+    private async Task ProcessDeferredTrackChangeAsync(long version)
+    {
+        await Task.Delay(QueueMetadataSettleDelay);
+        if (version != _deferredQueueTrackVersion || version != _vm.TrackVersion) return;
+        _deferredQueueTrackVersion = 0;
+        ProcessObservedTrackChange();
+    }
+
+    private void ProcessObservedTrackChange()
+    {
+        var prevTitle = _observedTrackTitle;
+        var prevSubtitle = _observedTrackSubtitle;
+        var prevDuration = _observedTrackDuration;
+        var prevIdle = _observedTrackIdle;
+        _observedTrackTitle = _vm.Title;
+        _observedTrackSubtitle = _vm.Subtitle;
+        _observedTrackDuration = _vm.Duration;
+        _observedTrackIdle = _vm.IsIdle;
+        _queueRefreshVersion++;
+        if (_vm.IsIdle)
+        {
+            _queueCache = null;
+            _queueCacheDirty = true;
+            _queueUpcomingUnknown = false;
+            if (_queueVisible && IsVisible)
+            {
+                _queueRows.Clear();
+                QueueStatus.Text = "再生情報を取得できません";
+                QueueStatus.ToolTip = null;
+            }
+            return;
+        }
+        if (_queueCache is null)
+        {
+            if (_queueLoading) _queueReloadPending = true;
+            return;
+        }
+        var advance = BuildEstimatedAdvance(_queueCache, prevTitle, prevSubtitle, prevDuration, prevIdle, _vm.Title, _queueUpcomingUnknown);
+        _queueCache = advance.Snapshot;
+        _queueCacheDirty = true;
+        _queueUpcomingUnknown = advance.UpcomingUnknown;
+        if (_queueVisible && IsVisible)
+            ApplyEstimatedAdvance(advance);
+    }
+
+    private static QueueAdvance BuildEstimatedAdvance(
+        PlayQueueSnapshot cache, string prevTitle, string prevSubtitle, TimeSpan prevDuration, bool prevIdle, string newTitle,
+        bool priorUnknown)
     {
         var history = cache.History.ToList();
+        PlayQueueItem? historyItem = null;
         if (!prevIdle && prevTitle.Length > 0)
         {
-            history.Insert(0, new PlayQueueItem(prevTitle, prevSubtitle, FormatQueueDuration(prevDuration)));
+            historyItem = new PlayQueueItem(prevTitle, prevSubtitle, FormatQueueDuration(prevDuration));
+            history.Insert(0, historyItem);
             if (history.Count > 50) history.RemoveRange(50, history.Count - 50);
         }
         var upcoming = cache.Upcoming.ToList();
-        if (upcoming.Count > 0 && string.Equals(upcoming[0].Title, newTitle, StringComparison.Ordinal))
-            upcoming.RemoveAt(0);
-        return new PlayQueueSnapshot(history, upcoming);
+        var consumed = 0;
+        var unknown = false;
+        var recovered = false;
+        var match = upcoming.FindIndex(i => string.Equals(i.Title, newTitle, StringComparison.Ordinal));
+        if (match >= 0)
+        {
+            consumed = match + 1;
+            upcoming.RemoveRange(0, consumed);
+            recovered = priorUnknown;
+        }
+        else
+        {
+            unknown = true;
+        }
+        return new QueueAdvance(new PlayQueueSnapshot(history, upcoming), historyItem, consumed, unknown, recovered);
+    }
+
+    private void ApplyEstimatedAdvance(QueueAdvance advance)
+    {
+        var bookmark = CaptureQueueViewportBookmark();
+        var scroll = QueueScrollViewer();
+        var savedOffset = scroll?.VerticalOffset ?? 0;
+
+        int IndexOfCurrent()
+        {
+            for (var i = 0; i < _queueRows.Count; i++)
+                if (_queueRows[i].IsCurrent) return i;
+            return -1;
+        }
+        int IndexOfHeader(string title)
+        {
+            for (var i = 0; i < _queueRows.Count; i++)
+                if (_queueRows[i].IsHeader && _queueRows[i].Title == title) return i;
+            return -1;
+        }
+
+        if (advance.HistoryItem is not null)
+        {
+            var historyHeader = IndexOfHeader("履歴");
+            if (historyHeader < 0)
+            {
+                _queueRows.Insert(0, new PlayQueueItem("履歴", "", "", true));
+                historyHeader = 0;
+            }
+            var current = IndexOfCurrent();
+            if (current >= 0) _queueRows.Insert(current, advance.HistoryItem);
+            var historyRows = 0;
+            for (var i = historyHeader + 1; i < _queueRows.Count && !_queueRows[i].IsHeader && !_queueRows[i].IsCurrent; i++)
+                historyRows++;
+            if (historyRows > 50) _queueRows.RemoveAt(historyHeader + 1);
+        }
+
+        var nextHeader = IndexOfHeader("次に再生");
+        if (nextHeader >= 0)
+        {
+            if (advance.UpcomingUnknown || advance.RecoveredUpcoming)
+            {
+                for (var i = _queueRows.Count - 1; i > nextHeader; i--) _queueRows.RemoveAt(i);
+            }
+            if (advance.RecoveredUpcoming)
+            {
+                for (var i = 0; i < advance.Snapshot.Upcoming.Count; i++)
+                    _queueRows.Insert(nextHeader + 1 + i, advance.Snapshot.Upcoming[i]);
+            }
+            else if (!advance.UpcomingUnknown)
+            {
+                var removed = 0;
+                while (removed < advance.ConsumedUpcoming
+                    && nextHeader + 1 < _queueRows.Count
+                    && !_queueRows[nextHeader + 1].IsHeader)
+                {
+                    _queueRows.RemoveAt(nextHeader + 1);
+                    removed++;
+                }
+            }
+        }
+
+        UpdateQueueStatus(advance.Snapshot, historyLoading: false);
+
+        var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(_queueRows, bookmark.Item, bookmark.Occurrence);
+        if (bookmarkIndex >= 0)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
+        }
+        else if (scroll is not null)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                StopQueueScroll();
+                var sv = QueueScrollViewer();
+                if (sv is not null) sv.ScrollToVerticalOffset(Math.Min(savedOffset, sv.ScrollableHeight));
+            }), DispatcherPriority.Loaded);
+        }
     }
 
     private static string FormatQueueDuration(TimeSpan t)
@@ -411,7 +559,7 @@ public partial class PlayerFlyout : Window
         PlayerView.Visibility = Visibility.Visible;
         QueueView.Visibility = Visibility.Collapsed;
         Height = HeightDip;
-        QueueItems.ItemsSource = null;
+        _queueRows.Clear();
         QueueStatus.Text = "";
         Reposition();
     }
@@ -436,23 +584,41 @@ public partial class PlayerFlyout : Window
             anchor = nextHeader;
         }
         rows.Add(nextHeader);
-        rows.AddRange(snapshot.Upcoming);
+        if (!_queueUpcomingUnknown || historyLoading)
+            rows.AddRange(snapshot.Upcoming);
         var bookmark = preserveViewport ? CaptureQueueViewportBookmark() : null;
-        QueueItems.ItemsSource = rows;
-        var estimated = _queueCacheDirty && !historyLoading;
-        QueueStatus.Text = (historyLoading
-            ? $"次に再生 {snapshot.Upcoming.Count} 曲　·　履歴を読み込み中…"
-            : snapshot.History.Count > 0
-                ? $"履歴 {snapshot.History.Count} 曲　·　次に再生 {snapshot.Upcoming.Count} 曲"
-                : $"次に再生 {snapshot.Upcoming.Count} 曲") + (estimated ? "　·　推定" : "");
-        QueueStatus.ToolTip = estimated
-            ? "曲送りから推定した表示です。更新ボタンでApple Musicと同期します。"
-            : null;
+        _queueRows.Reset(rows);
+        UpdateQueueStatus(snapshot, historyLoading);
         var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(rows, bookmark.Item, bookmark.Occurrence);
         if (bookmarkIndex >= 0)
             _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
         else
             _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
+    }
+
+    private void UpdateQueueStatus(PlayQueueSnapshot snapshot, bool historyLoading)
+    {
+        if (historyLoading)
+        {
+            QueueStatus.Text = $"次に再生 {snapshot.Upcoming.Count} 曲　·　履歴を読み込み中…";
+            QueueStatus.ToolTip = null;
+            return;
+        }
+        if (_queueUpcomingUnknown)
+        {
+            QueueStatus.Text = snapshot.History.Count > 0
+                ? $"履歴 {snapshot.History.Count} 曲　·　次に再生 要同期"
+                : "次に再生 要同期";
+            QueueStatus.ToolTip = "再生内容が保存済みキューと一致しません。更新ボタンでApple Musicと同期します。";
+            return;
+        }
+        var estimated = _queueCacheDirty;
+        QueueStatus.Text = (snapshot.History.Count > 0
+            ? $"履歴 {snapshot.History.Count} 曲　·　次に再生 {snapshot.Upcoming.Count} 曲"
+            : $"次に再生 {snapshot.Upcoming.Count} 曲") + (estimated ? "　·　推定" : "");
+        QueueStatus.ToolTip = estimated
+            ? "曲送りから推定した表示です。更新ボタンでApple Musicと同期します。"
+            : null;
     }
 
     private async Task LoadQueueAsync(bool showUpcomingEarly)
@@ -494,6 +660,7 @@ public partial class PlayerFlyout : Window
             {
                 _queueCache = result;
                 _queueCacheDirty = false;
+                _queueUpcomingUnknown = false;
             }
             if (!_queueVisible || !IsVisible) return;
             if (result is null)
@@ -509,8 +676,9 @@ public partial class PlayerFlyout : Window
                 return;
             else if (result.History.Count == 0 && result.Upcoming.Count == 0)
             {
-                QueueItems.ItemsSource = null;
+                _queueRows.Clear();
                 QueueStatus.Text = "再生待ちと履歴はありません";
+                QueueStatus.ToolTip = null;
             }
             else
                 ApplyQueueSnapshot(result, preserveViewport: QueueItems.Items.Count > 0);
