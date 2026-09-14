@@ -45,12 +45,13 @@ public partial class PlayerFlyout : Window
     private bool _suppressForegroundClose;
     private int _queueRefreshVersion;
     private bool _queueReloadPending;
-    private static readonly TimeSpan QueueCacheFreshness = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan QueueTrackSettleDelay = TimeSpan.FromMilliseconds(700);
+    private static readonly TimeSpan QueueRecoverySettleDelay = TimeSpan.FromMilliseconds(700);
     private PlayQueueSnapshot? _queueCache;
-    private DateTimeOffset _queueCacheUpdatedAt;
     private bool _queueCacheDirty = true;
-    private DateTimeOffset _lastTrackChangedAt = DateTimeOffset.MinValue;
+    private string _observedTrackTitle = "";
+    private string _observedTrackSubtitle = "";
+    private TimeSpan _observedTrackDuration;
+    private bool _observedTrackIdle = true;
     private int _queueLoadVersion;
     private ScrollViewer? _queueScrollViewer;
     private double _queueScrollStart;
@@ -69,6 +70,10 @@ public partial class PlayerFlyout : Window
         _settings = settings;
         _strip = strip;
         DataContext = vm;
+        _observedTrackTitle = _vm.Title;
+        _observedTrackSubtitle = _vm.Subtitle;
+        _observedTrackDuration = _vm.Duration;
+        _observedTrackIdle = _vm.IsIdle;
 
         ApplyTheme();
         SystemEvents.UserPreferenceChanged += (_, _) => Dispatcher.InvokeAsync(ApplyTheme);
@@ -210,27 +215,64 @@ public partial class PlayerFlyout : Window
     {
         if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
             UpdateProgress();
+        if (e.PropertyName == nameof(PlayerViewModel.Duration))
+            _observedTrackDuration = _vm.Duration;
+        if (e.PropertyName == nameof(PlayerViewModel.IsIdle))
+            _observedTrackIdle = _vm.IsIdle;
         if (e.PropertyName == nameof(PlayerViewModel.TrackVersion))
         {
-            _queueCacheDirty = true;
-            _lastTrackChangedAt = DateTimeOffset.UtcNow;
+            var prevTitle = _observedTrackTitle;
+            var prevSubtitle = _observedTrackSubtitle;
+            var prevDuration = _observedTrackDuration;
+            var prevIdle = _observedTrackIdle;
+            _observedTrackTitle = _vm.Title;
+            _observedTrackSubtitle = _vm.Subtitle;
+            _observedTrackDuration = _vm.Duration;
+            _observedTrackIdle = _vm.IsIdle;
+            _queueRefreshVersion++;
             if (_vm.IsIdle)
             {
                 _queueCache = null;
-                _queueCacheUpdatedAt = default;
+                _queueCacheDirty = true;
+                return;
             }
-            var version = ++_queueRefreshVersion;
-            if (_queueVisible && IsVisible) _ = RefreshQueueWhenStableAsync(version);
+            if (_queueCache is null)
+            {
+                if (_queueLoading) _queueReloadPending = true;
+                return;
+            }
+            _queueCache = EstimateAdvancedCache(_queueCache, prevTitle, prevSubtitle, prevDuration, prevIdle, _vm.Title);
+            _queueCacheDirty = true;
+            if (_queueVisible && IsVisible)
+                ApplyQueueSnapshot(_queueCache, preserveViewport: true);
         }
     }
 
-    private async Task RefreshQueueWhenStableAsync(int version)
+    private static PlayQueueSnapshot EstimateAdvancedCache(
+        PlayQueueSnapshot cache, string prevTitle, string prevSubtitle, TimeSpan prevDuration, bool prevIdle, string newTitle)
     {
-        var remaining = QueueTrackSettleDelay - (DateTimeOffset.UtcNow - _lastTrackChangedAt);
-        if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
-        if (version != _queueRefreshVersion || !_queueVisible || !IsVisible) return;
-        if (_queueLoading) { _queueReloadPending = true; return; }
-        await LoadQueueAsync(showUpcomingEarly: false);
+        var history = cache.History.ToList();
+        if (!prevIdle && prevTitle.Length > 0)
+        {
+            history.Insert(0, new PlayQueueItem(prevTitle, prevSubtitle, FormatQueueDuration(prevDuration)));
+            if (history.Count > 50) history.RemoveRange(50, history.Count - 50);
+        }
+        var upcoming = cache.Upcoming.ToList();
+        if (upcoming.Count > 0 && string.Equals(upcoming[0].Title, newTitle, StringComparison.Ordinal))
+            upcoming.RemoveAt(0);
+        return new PlayQueueSnapshot(history, upcoming);
+    }
+
+    private static string FormatQueueDuration(TimeSpan t)
+        => t <= TimeSpan.Zero ? "" : t.TotalHours >= 1
+            ? $"{(int)t.TotalHours}:{t.Minutes:D2}:{t.Seconds:D2}"
+            : $"{(int)t.TotalMinutes}:{t.Seconds:D2}";
+
+    private async Task RecoverQueueAfterSettleAsync(int version)
+    {
+        await Task.Delay(QueueRecoverySettleDelay);
+        if (version != _queueRefreshVersion || !_queueVisible || !IsVisible || _queueCache is not null || _queueLoading) return;
+        await LoadQueueAsync(showUpcomingEarly: true);
     }
 
     private void UpdateProgress()
@@ -353,13 +395,6 @@ public partial class PlayerFlyout : Window
         if (_queueCache is not null)
         {
             ApplyQueueSnapshot(_queueCache, preserveViewport: false);
-            if (!_queueCacheDirty && DateTimeOffset.UtcNow - _queueCacheUpdatedAt < QueueCacheFreshness) return;
-            if (_queueCacheDirty)
-            {
-                _ = RefreshQueueWhenStableAsync(++_queueRefreshVersion);
-                return;
-            }
-            await LoadQueueAsync(showUpcomingEarly: false);
             return;
         }
         ApplyQueueSnapshot(new PlayQueueSnapshot([], []), preserveViewport: false, historyLoading: true);
@@ -404,11 +439,15 @@ public partial class PlayerFlyout : Window
         rows.AddRange(snapshot.Upcoming);
         var bookmark = preserveViewport ? CaptureQueueViewportBookmark() : null;
         QueueItems.ItemsSource = rows;
-        QueueStatus.Text = historyLoading
+        var estimated = _queueCacheDirty && !historyLoading;
+        QueueStatus.Text = (historyLoading
             ? $"次に再生 {snapshot.Upcoming.Count} 曲　·　履歴を読み込み中…"
             : snapshot.History.Count > 0
                 ? $"履歴 {snapshot.History.Count} 曲　·　次に再生 {snapshot.Upcoming.Count} 曲"
-                : $"次に再生 {snapshot.Upcoming.Count} 曲";
+                : $"次に再生 {snapshot.Upcoming.Count} 曲") + (estimated ? "　·　推定" : "");
+        QueueStatus.ToolTip = estimated
+            ? "曲送りから推定した表示です。更新ボタンでApple Musicと同期します。"
+            : null;
         var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(rows, bookmark.Item, bookmark.Occurrence);
         if (bookmarkIndex >= 0)
             _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
@@ -454,12 +493,18 @@ public partial class PlayerFlyout : Window
             if (result is not null && resultIsCurrent)
             {
                 _queueCache = result;
-                _queueCacheUpdatedAt = DateTimeOffset.UtcNow;
                 _queueCacheDirty = false;
             }
             if (!_queueVisible || !IsVisible) return;
             if (result is null)
-                QueueStatus.Text = Volatile.Read(ref upcomingAvailable) != 0 ? "履歴を取得できませんでした" : "再生待ちリストを取得できませんでした";
+            {
+                if (_queueCache is not null)
+                    ApplyQueueSnapshot(_queueCache, preserveViewport: true);
+                else if (Volatile.Read(ref upcomingAvailable) != 0 && QueueItems.Items.Count > 0)
+                    QueueStatus.Text = "履歴を取得できませんでした";
+                else
+                    QueueStatus.Text = "再生待ちリストを取得できませんでした";
+            }
             else if (!resultIsCurrent)
                 return;
             else if (result.History.Count == 0 && result.Upcoming.Count == 0)
@@ -477,9 +522,10 @@ public partial class PlayerFlyout : Window
             _suppressForegroundClose = false;
             _queueLoading = false;
             var trackChangedDuringLoad = _vm.TrackVersion != loadTrackVersion;
-            var reschedule = (_queueReloadPending || trackChangedDuringLoad) && _queueVisible && IsVisible;
+            var reschedule = (_queueReloadPending || trackChangedDuringLoad)
+                && _queueCache is null && _queueVisible && IsVisible;
             _queueReloadPending = false;
-            if (reschedule) _ = RefreshQueueWhenStableAsync(++_queueRefreshVersion);
+            if (reschedule) _ = RecoverQueueAfterSettleAsync(++_queueRefreshVersion);
         }
     }
 
