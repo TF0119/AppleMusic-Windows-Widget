@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -26,6 +27,9 @@ public partial class PlayerFlyout : Window
     private const int HeightDip = 150;
     private const int QueueHeightDip = 360;
     private const int GapAboveTaskbarPx = 8; // physical px between flyout bottom and taskbar top
+    private const double QueueScrollDurationMs = 140;
+
+    private sealed record QueueViewportBookmark(PlayQueueItem Item, int Occurrence, double Y);
 
     private readonly PlayerViewModel _vm;
     private readonly TaskbarService _taskbar;
@@ -40,6 +44,11 @@ public partial class PlayerFlyout : Window
     private bool _suppressForegroundClose;
     private int _queueRefreshVersion;
     private bool _queueReloadPending;
+    private ScrollViewer? _queueScrollViewer;
+    private double _queueScrollStart;
+    private double _queueScrollTarget;
+    private long _queueScrollStarted;
+    private bool _queueScrollAnimating;
 
     /// <summary>Set by the owner; invoked when the track info area is clicked.</summary>
     public Action? OpenAppleMusicRequested { get; set; }
@@ -222,6 +231,98 @@ public partial class PlayerFlyout : Window
         if (QueueItems.SelectedItem is not null) QueueItems.SelectedItem = null;
     }
 
+    private ScrollViewer? QueueScrollViewer() => _queueScrollViewer ??= FindVisualChild<ScrollViewer>(QueueItems);
+
+    private void StopQueueScroll()
+    {
+        if (!_queueScrollAnimating) return;
+        _queueScrollAnimating = false;
+        CompositionTarget.Rendering -= OnQueueScrollFrame;
+    }
+
+    private void OnQueuePreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var scroll = QueueScrollViewer();
+        if (scroll is null || scroll.ScrollableHeight <= 0) return;
+        var lines = SystemParameters.WheelScrollLines;
+        if (lines == 0) return;
+        var distance = lines < 0 ? scroll.ViewportHeight : Math.Max(48, lines * 16);
+        var delta = -e.Delta / 120.0 * distance;
+        var baseOffset = _queueScrollAnimating ? _queueScrollTarget : scroll.VerticalOffset;
+        _queueScrollStart = scroll.VerticalOffset;
+        _queueScrollTarget = Math.Clamp(baseOffset + delta, 0, scroll.ScrollableHeight);
+        e.Handled = true;
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            StopQueueScroll();
+            scroll.ScrollToVerticalOffset(_queueScrollTarget);
+            return;
+        }
+        _queueScrollStarted = Stopwatch.GetTimestamp();
+        if (_queueScrollAnimating) return;
+        _queueScrollAnimating = true;
+        CompositionTarget.Rendering += OnQueueScrollFrame;
+    }
+
+    private void OnQueueDirectManipulationStarted(object sender, RoutedEventArgs e) => StopQueueScroll();
+
+    private void OnQueueScrollFrame(object? sender, EventArgs e)
+    {
+        var scroll = QueueScrollViewer();
+        if (!_queueScrollAnimating || scroll is null) { StopQueueScroll(); return; }
+        var elapsed = Stopwatch.GetElapsedTime(_queueScrollStarted).TotalMilliseconds;
+        var progress = Math.Clamp(elapsed / QueueScrollDurationMs, 0, 1);
+        var eased = 1 - Math.Pow(1 - progress, 3);
+        scroll.ScrollToVerticalOffset(_queueScrollStart + ((_queueScrollTarget - _queueScrollStart) * eased));
+        if (progress >= 1) StopQueueScroll();
+    }
+
+    private QueueViewportBookmark? CaptureQueueViewportBookmark()
+    {
+        var scroll = QueueScrollViewer();
+        if (scroll is null || QueueItems.Items.Count == 0) return null;
+        ListBoxItem? topmost = null;
+        var topmostY = double.MaxValue;
+        for (var i = 0; i < QueueItems.Items.Count; i++)
+        {
+            if (QueueItems.ItemContainerGenerator.ContainerFromIndex(i) is not ListBoxItem container) continue;
+            if (!container.IsVisible) continue;
+            var y = container.TransformToAncestor(scroll).Transform(new Point()).Y;
+            if (y + container.ActualHeight > 0 && y < topmostY) { topmostY = y; topmost = container; }
+        }
+        if (topmost is null || QueueItems.ItemContainerGenerator.ItemFromContainer(topmost) is not PlayQueueItem item) return null;
+        var index = QueueItems.ItemContainerGenerator.IndexFromContainer(topmost);
+        var occurrence = 0;
+        for (var i = 0; i < index; i++)
+            if (Equals(QueueItems.Items[i], item)) occurrence++;
+        return new QueueViewportBookmark(item, occurrence, topmostY);
+    }
+
+    private static int IndexOfOccurrence(IReadOnlyList<PlayQueueItem> rows, PlayQueueItem item, int occurrence)
+    {
+        var seen = 0;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (!rows[i].Equals(item)) continue;
+            if (seen == occurrence) return i;
+            seen++;
+        }
+        return -1;
+    }
+
+    private void RestoreQueueBookmark(int index, double savedY)
+    {
+        if (!_queueVisible || !IsVisible) return;
+        StopQueueScroll();
+        if (index < 0 || index >= QueueItems.Items.Count) return;
+        QueueItems.ScrollIntoView(QueueItems.Items[index]);
+        QueueItems.UpdateLayout();
+        var scroll = QueueScrollViewer();
+        if (scroll is null || QueueItems.ItemContainerGenerator.ContainerFromIndex(index) is not ListBoxItem container) return;
+        var y = container.TransformToAncestor(scroll).Transform(new Point()).Y;
+        scroll.ScrollToVerticalOffset(scroll.VerticalOffset + (y - savedY));
+    }
+
     private async Task ShowQueueAsync()
     {
         _queueVisible = true;
@@ -234,6 +335,7 @@ public partial class PlayerFlyout : Window
 
     private void ShowPlayerView()
     {
+        StopQueueScroll();
         _queueVisible = false;
         _queueRefreshVersion++;
         _queueReloadPending = false;
@@ -251,8 +353,8 @@ public partial class PlayerFlyout : Window
         _queueLoading = true;
         _suppressForegroundClose = true;
         QueueRefreshButton.IsEnabled = false;
-        QueueItems.ItemsSource = null;
-        QueueStatus.Text = "読み込み中…";
+        var hadRows = QueueItems.Items.Count > 0;
+        QueueStatus.Text = hadRows ? "更新中…" : "読み込み中…";
         try
         {
             var result = await AppleMusicUiAutomation.ReadPlayQueueAsync();
@@ -260,7 +362,10 @@ public partial class PlayerFlyout : Window
             if (result is null)
                 QueueStatus.Text = "再生待ちリストを取得できませんでした";
             else if (result.History.Count == 0 && result.Upcoming.Count == 0)
+            {
+                QueueItems.ItemsSource = null;
                 QueueStatus.Text = "再生待ちと履歴はありません";
+            }
             else
             {
                 var rows = new List<PlayQueueItem>();
@@ -282,11 +387,16 @@ public partial class PlayerFlyout : Window
                 }
                 rows.Add(nextHeader);
                 rows.AddRange(result.Upcoming);
+                var bookmark = CaptureQueueViewportBookmark();
                 QueueItems.ItemsSource = rows;
                 QueueStatus.Text = result.History.Count > 0
-                    ? $"上へスクロールで履歴 {result.History.Count} 曲　　次に再生 {result.Upcoming.Count} 曲"
+                    ? $"履歴 {result.History.Count} 曲　·　次に再生 {result.Upcoming.Count} 曲"
                     : $"次に再生 {result.Upcoming.Count} 曲";
-                _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
+                var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(rows, bookmark.Item, bookmark.Occurrence);
+                if (bookmarkIndex >= 0)
+                    _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
+                else
+                    _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
             }
         }
         finally
@@ -304,6 +414,7 @@ public partial class PlayerFlyout : Window
     private void ScrollItemToTop(object item)
     {
         if (!_queueVisible || !IsVisible) return;
+        StopQueueScroll();
         QueueItems.ScrollIntoView(item);
         QueueItems.UpdateLayout();
         var scroll = FindVisualChild<ScrollViewer>(QueueItems);
