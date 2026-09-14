@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -44,6 +45,13 @@ public partial class PlayerFlyout : Window
     private bool _suppressForegroundClose;
     private int _queueRefreshVersion;
     private bool _queueReloadPending;
+    private static readonly TimeSpan QueueCacheFreshness = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan QueueTrackSettleDelay = TimeSpan.FromMilliseconds(700);
+    private PlayQueueSnapshot? _queueCache;
+    private DateTimeOffset _queueCacheUpdatedAt;
+    private bool _queueCacheDirty = true;
+    private DateTimeOffset _lastTrackChangedAt = DateTimeOffset.MinValue;
+    private int _queueLoadVersion;
     private ScrollViewer? _queueScrollViewer;
     private double _queueScrollStart;
     private double _queueScrollTarget;
@@ -202,19 +210,27 @@ public partial class PlayerFlyout : Window
     {
         if (e.PropertyName == nameof(PlayerViewModel.ProgressFraction))
             UpdateProgress();
-        if (e.PropertyName == nameof(PlayerViewModel.Title) && _queueVisible && IsVisible)
+        if (e.PropertyName == nameof(PlayerViewModel.TrackVersion))
         {
+            _queueCacheDirty = true;
+            _lastTrackChangedAt = DateTimeOffset.UtcNow;
+            if (_vm.IsIdle)
+            {
+                _queueCache = null;
+                _queueCacheUpdatedAt = default;
+            }
             var version = ++_queueRefreshVersion;
-            _ = RefreshQueueAfterTrackChangeAsync(version);
+            if (_queueVisible && IsVisible) _ = RefreshQueueWhenStableAsync(version);
         }
     }
 
-    private async Task RefreshQueueAfterTrackChangeAsync(int version)
+    private async Task RefreshQueueWhenStableAsync(int version)
     {
-        await Task.Delay(300);
+        var remaining = QueueTrackSettleDelay - (DateTimeOffset.UtcNow - _lastTrackChangedAt);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
         if (version != _queueRefreshVersion || !_queueVisible || !IsVisible) return;
         if (_queueLoading) { _queueReloadPending = true; return; }
-        await LoadQueueAsync();
+        await LoadQueueAsync(showUpcomingEarly: false);
     }
 
     private void UpdateProgress()
@@ -223,7 +239,11 @@ public partial class PlayerFlyout : Window
     }
 
     private async void OnPlayQueueClick(object sender, RoutedEventArgs e) => await ShowQueueAsync();
-    private async void OnQueueRefreshClick(object sender, RoutedEventArgs e) => await LoadQueueAsync();
+    private async void OnQueueRefreshClick(object sender, RoutedEventArgs e)
+    {
+        _queueRefreshVersion++;
+        await LoadQueueAsync(showUpcomingEarly: false);
+    }
     private void OnQueueBackClick(object sender, RoutedEventArgs e) => ShowPlayerView();
 
     private void OnQueueSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -330,7 +350,21 @@ public partial class PlayerFlyout : Window
         QueueView.Visibility = Visibility.Visible;
         Height = QueueHeightDip;
         Reposition();
-        await LoadQueueAsync();
+        if (_queueCache is not null)
+        {
+            ApplyQueueSnapshot(_queueCache, preserveViewport: false);
+            if (!_queueCacheDirty && DateTimeOffset.UtcNow - _queueCacheUpdatedAt < QueueCacheFreshness) return;
+            if (_queueCacheDirty)
+            {
+                _ = RefreshQueueWhenStableAsync(++_queueRefreshVersion);
+                return;
+            }
+            await LoadQueueAsync(showUpcomingEarly: false);
+            return;
+        }
+        ApplyQueueSnapshot(new PlayQueueSnapshot([], []), preserveViewport: false, historyLoading: true);
+        QueueStatus.Text = "再生キューを読み込み中…";
+        await LoadQueueAsync(showUpcomingEarly: true);
     }
 
     private void ShowPlayerView()
@@ -347,57 +381,94 @@ public partial class PlayerFlyout : Window
         Reposition();
     }
 
-    private async Task LoadQueueAsync()
+    private void ApplyQueueSnapshot(PlayQueueSnapshot snapshot, bool preserveViewport, bool historyLoading = false)
     {
-        if (_queueLoading) return;
+        var rows = new List<PlayQueueItem>();
+        if (snapshot.History.Count > 0)
+        {
+            rows.Add(new PlayQueueItem("履歴", "", "", true));
+            for (var i = snapshot.History.Count - 1; i >= 0; i--) rows.Add(snapshot.History[i]);
+        }
+        var nextHeader = new PlayQueueItem("次に再生", "", "", true);
+        PlayQueueItem anchor;
+        if (!_vm.IsIdle)
+        {
+            anchor = new PlayQueueItem("", "", "", IsCurrent: true);
+            rows.Add(anchor);
+        }
+        else
+        {
+            anchor = nextHeader;
+        }
+        rows.Add(nextHeader);
+        rows.AddRange(snapshot.Upcoming);
+        var bookmark = preserveViewport ? CaptureQueueViewportBookmark() : null;
+        QueueItems.ItemsSource = rows;
+        QueueStatus.Text = historyLoading
+            ? $"次に再生 {snapshot.Upcoming.Count} 曲　·　履歴を読み込み中…"
+            : snapshot.History.Count > 0
+                ? $"履歴 {snapshot.History.Count} 曲　·　次に再生 {snapshot.Upcoming.Count} 曲"
+                : $"次に再生 {snapshot.Upcoming.Count} 曲";
+        var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(rows, bookmark.Item, bookmark.Occurrence);
+        if (bookmarkIndex >= 0)
+            _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
+        else
+            _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
+    }
+
+    private async Task LoadQueueAsync(bool showUpcomingEarly)
+    {
+        if (_queueLoading)
+        {
+            if (_queueCacheDirty) _queueReloadPending = true;
+            return;
+        }
         _queueLoading = true;
         _suppressForegroundClose = true;
         QueueRefreshButton.IsEnabled = false;
-        var hadRows = QueueItems.Items.Count > 0;
-        QueueStatus.Text = hadRows ? "更新中…" : "読み込み中…";
+        var loadVersion = ++_queueLoadVersion;
+        var loadTrackVersion = _vm.TrackVersion;
+        var coldLoad = showUpcomingEarly && _queueCache is null;
+        var upcomingAvailable = 0;
+        if (!coldLoad)
+            QueueStatus.Text = QueueItems.Items.Count > 0 ? "更新中…" : "読み込み中…";
         try
         {
-            var result = await AppleMusicUiAutomation.ReadPlayQueueAsync();
+            var result = await AppleMusicUiAutomation.ReadPlayQueueAsync(
+                coldLoad
+                    ? upcoming =>
+                    {
+                        Interlocked.Exchange(ref upcomingAvailable, 1);
+                        try
+                        {
+                            _ = Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                if (!_queueVisible || !IsVisible || loadVersion != _queueLoadVersion || _queueCache is not null || _vm.TrackVersion != loadTrackVersion) return;
+                                ApplyQueueSnapshot(new PlayQueueSnapshot([], upcoming), QueueItems.Items.Count > 0, historyLoading: true);
+                            }));
+                        }
+                        catch (Exception ex) { Debug.WriteLine($"[PlayerFlyout] queue progressive: {ex.Message}"); }
+                    }
+                    : null);
+            var resultIsCurrent = _vm.TrackVersion == loadTrackVersion;
+            if (result is not null && resultIsCurrent)
+            {
+                _queueCache = result;
+                _queueCacheUpdatedAt = DateTimeOffset.UtcNow;
+                _queueCacheDirty = false;
+            }
             if (!_queueVisible || !IsVisible) return;
             if (result is null)
-                QueueStatus.Text = "再生待ちリストを取得できませんでした";
+                QueueStatus.Text = Volatile.Read(ref upcomingAvailable) != 0 ? "履歴を取得できませんでした" : "再生待ちリストを取得できませんでした";
+            else if (!resultIsCurrent)
+                return;
             else if (result.History.Count == 0 && result.Upcoming.Count == 0)
             {
                 QueueItems.ItemsSource = null;
                 QueueStatus.Text = "再生待ちと履歴はありません";
             }
             else
-            {
-                var rows = new List<PlayQueueItem>();
-                if (result.History.Count > 0)
-                {
-                    rows.Add(new PlayQueueItem("履歴", "", "", true));
-                    for (var i = result.History.Count - 1; i >= 0; i--) rows.Add(result.History[i]);
-                }
-                var nextHeader = new PlayQueueItem("次に再生", "", "", true);
-                PlayQueueItem anchor;
-                if (!_vm.IsIdle)
-                {
-                    anchor = new PlayQueueItem("", "", "", IsCurrent: true);
-                    rows.Add(anchor);
-                }
-                else
-                {
-                    anchor = nextHeader;
-                }
-                rows.Add(nextHeader);
-                rows.AddRange(result.Upcoming);
-                var bookmark = CaptureQueueViewportBookmark();
-                QueueItems.ItemsSource = rows;
-                QueueStatus.Text = result.History.Count > 0
-                    ? $"履歴 {result.History.Count} 曲　·　次に再生 {result.Upcoming.Count} 曲"
-                    : $"次に再生 {result.Upcoming.Count} 曲";
-                var bookmarkIndex = bookmark is null ? -1 : IndexOfOccurrence(rows, bookmark.Item, bookmark.Occurrence);
-                if (bookmarkIndex >= 0)
-                    _ = Dispatcher.BeginInvoke(new Action(() => RestoreQueueBookmark(bookmarkIndex, bookmark!.Y)), DispatcherPriority.Loaded);
-                else
-                    _ = Dispatcher.BeginInvoke(new Action(() => ScrollItemToTop(anchor)), DispatcherPriority.Loaded);
-            }
+                ApplyQueueSnapshot(result, preserveViewport: QueueItems.Items.Count > 0);
         }
         finally
         {
@@ -405,9 +476,10 @@ public partial class PlayerFlyout : Window
             await Task.Delay(100);
             _suppressForegroundClose = false;
             _queueLoading = false;
-            var reload = _queueReloadPending && _queueVisible && IsVisible;
+            var trackChangedDuringLoad = _vm.TrackVersion != loadTrackVersion;
+            var reschedule = (_queueReloadPending || trackChangedDuringLoad) && _queueVisible && IsVisible;
             _queueReloadPending = false;
-            if (reload) _ = LoadQueueAsync();
+            if (reschedule) _ = RefreshQueueWhenStableAsync(++_queueRefreshVersion);
         }
     }
 

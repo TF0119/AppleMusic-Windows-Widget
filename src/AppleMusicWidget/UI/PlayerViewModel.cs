@@ -29,6 +29,7 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
     private bool _canNext;
     private bool _canSeek;
     private int _artworkSeq;
+    private long _trackVersion;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -70,6 +71,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
     public double ProgressFraction =>
         _duration > TimeSpan.Zero ? Math.Clamp(_position / _duration, 0.0, 1.0) : 0.0;
 
+    public long TrackVersion => _trackVersion;
+
     public bool IsPlaying => _state == PlaybackState.Playing;
     public string PlayPauseGlyph => IsPlaying ? "❚❚" : "▶";
 
@@ -103,6 +106,8 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
         _duration = TimeSpan.Zero;
         Artwork = null;
         CanPrevious = CanNext = CanSeek = false;
+        _trackVersion++;
+        Raise(nameof(TrackVersion));
         Raise(nameof(Title)); Raise(nameof(Subtitle)); Raise(nameof(IsIdle));
         Raise(nameof(IsPlaying)); Raise(nameof(PlayPauseGlyph));
         Raise(nameof(Position)); Raise(nameof(Duration));
@@ -113,9 +118,11 @@ public sealed class PlayerViewModel : INotifyPropertyChanged
 
     private void OnTrackChanged(TrackInfo t)
     {
+        _trackVersion++;
         _track = t;
         _artworkSeq++;
         Artwork = null; // PLAN §15: never show the previous track's art
+        Raise(nameof(TrackVersion));
         Raise(nameof(Title)); Raise(nameof(Subtitle)); Raise(nameof(IsIdle));
     }
 

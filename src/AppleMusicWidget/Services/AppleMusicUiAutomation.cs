@@ -18,7 +18,8 @@ public static class AppleMusicUiAutomation
                 Debug.WriteLine("[UIA] ActionButton does not support InvokePattern");
         });
 
-    public static Task<PlayQueueSnapshot?> ReadPlayQueueAsync() =>
+    public static Task<PlayQueueSnapshot?> ReadPlayQueueAsync(
+        Action<IReadOnlyList<PlayQueueItem>>? upcomingReady = null) =>
         Task.Run<PlayQueueSnapshot?>(() =>
         {
             var previousForeground = Native.GetForegroundWindow();
@@ -80,7 +81,12 @@ public static class AppleMusicUiAutomation
                 historyWasSelected = initialTabs.Value.History.Current.ToggleState == ToggleState.On;
 
                 if (!SelectQueueTab(root, history: false, previousForeground)) return null;
-                var upcoming = ReadQueueItems(root, 200);
+                Action<IReadOnlyList<PlayQueueItem>>? safeProgress = upcomingReady is null ? null : items =>
+                {
+                    try { upcomingReady(items); }
+                    catch (Exception ex) { Debug.WriteLine($"[UIA] PlayQueue upcomingReady: {ex.Message}"); }
+                };
+                var upcoming = ReadQueueItems(root, 200, safeProgress);
                 if (upcoming is null) return null;
                 if (!SelectQueueTab(root, history: true, previousForeground)) return null;
                 var history = ReadQueueItems(root, 50);
@@ -161,7 +167,10 @@ public static class AppleMusicUiAutomation
         return freshTarget.Current.ToggleState == ToggleState.On;
     }
 
-    private static IReadOnlyList<PlayQueueItem>? ReadQueueItems(AutomationElement root, int limit)
+    private static IReadOnlyList<PlayQueueItem>? ReadQueueItems(
+        AutomationElement root,
+        int limit,
+        Action<IReadOnlyList<PlayQueueItem>>? progress = null)
     {
         var list = root.FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.AutomationIdProperty, "PlayQueueListView"));
@@ -177,22 +186,40 @@ public static class AppleMusicUiAutomation
         }
         var container = (ItemContainerPattern)containerPattern;
         var items = new List<PlayQueueItem>();
+        var reported = 0;
         AutomationElement? current = null;
+        var request = new CacheRequest();
+        request.Add(AutomationElement.NameProperty);
         while (items.Count < limit)
         {
             current = container.FindItemByProperty(current, null!, null);
             if (current is null) break;
-            var texts = current.FindAll(TreeScope.Descendants,
-                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text));
+            AutomationElementCollection texts;
+            using (request.Activate())
+            {
+                texts = current.FindAll(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text));
+            }
             var values = new List<string>();
             for (var i = 0; i < texts.Count; i++)
             {
-                var value = texts[i].Current.Name;
+                string value;
+                try { value = texts[i].Cached.Name; }
+                catch { value = texts[i].Current.Name; }
                 if (!string.IsNullOrWhiteSpace(value)) values.Add(value);
             }
             if (values.Count > 0)
+            {
                 items.Add(new PlayQueueItem(values[0], values.Count > 1 ? values[1] : "", values.Count > 2 ? values[2] : ""));
+                if (progress is not null && (items.Count == 5 || items.Count % 25 == 0))
+                {
+                    reported = items.Count;
+                    progress(items.ToArray());
+                }
+            }
         }
+        if (progress is not null && items.Count > reported)
+            progress(items.ToArray());
         return items;
     }
 
